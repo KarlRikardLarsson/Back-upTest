@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "/tmp/code", line 1633, in <module>
+    app_info_html, app_name = app_info_to_html(app_info_json)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/code", line 170, in app_info_to_html
+    value = attributes[key] if key not in ("createdDate", "modifiedDate", "lastReloadTime") else datetime.strptime(attributes[key], "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%d.%m.%Y %H:%M:%S %Z")
+                                                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/_strptime.py", line 653, in _strptime_datetime
+    tt, fraction, gmtoff_fraction = _strptime(data_string, format)
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/_strptime.py", line 432, in _strptime
+    raise ValueError("time data %r does not match format %r" %
+ValueError: time data '' does not match format '%Y-%m-%dT%H:%M:%S.%fZ'
