@@ -1,0 +1,1479 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <title>Technical Dokumentation</title>
+    <style>/* Import Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;700&family=Open+Sans:wght@300;400;500;600;700&display=swap');
+/* ========================================
+   ROOT VARIABLES
+   ======================================== */
+:root {
+  /* Primary Brand Colors */
+  --kv-gold-primary: #F5A623;
+  --kv-gold-light: #FFD97D;
+  --kv-gold-dark: #D68910;
+  
+  /* Secondary Colors */
+  --kv-charcoal: #2C3E50;
+  --kv-charcoal-light: #34495E;
+  --kv-orange-accent: #E67E22;
+  
+  /* Neutral Colors */
+  --kv-white: #FFFFFF;
+  --kv-warm-white: #FAFAFA;
+  --kv-light-bg: #FFF4E6;
+  --kv-grey-light: #ECF0F1;
+  --kv-grey-medium: #95A5A6;
+  --kv-grey-dark: #7F8C8D;
+  
+  /* Text Colors */
+  --kv-text-primary: #2C3E50;
+  --kv-text-secondary: #5D6D7E;
+  --kv-text-light: #95A5A6;
+}
+/* ========================================
+   TYPOGRAPHY
+   ======================================== */
+body {
+  font-family: 'Open Sans', Arial, sans-serif !important;
+  color: var(--kv-text-primary) !important;
+  line-height: 1.6;
+  font-weight: 400;
+}
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Montserrat', Arial, sans-serif !important;
+  color: var(--kv-charcoal) !important;
+  font-weight: 600;
+}
+h1 {
+  font-weight: 700 !important;
+}
+/* ========================================
+   HEADER & NAVIGATION - MAIN REBRAND
+   ======================================== */
+/* Top Utilities Bar */
+#mega header .utilities {
+  background-color: var(--kv-warm-white) !important;
+  border-bottom: 1px solid var(--kv-grey-light) !important;
+  padding: 8px 20px !important;
+}
+#mega header .utilities li,
+#mega header .utilities li a {
+  color: var(--kv-text-secondary) !important;
+  font-size: 0.875em;
+}
+/* Main Navigation Container */
+#mega {
+  background-color: var(--kv-white) !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+#mega header .navigation {
+  background-color: var(--kv-white) !important;
+  border-bottom: 3px solid var(--kv-gold-primary) !important;
+  height: auto !important;
+  padding: 15px 20px !important;
+}
+/* Logo Styling */
+#mega .logo a,
+#mega .mega-logo {
+  display: flex !important;
+  align-items: center !important;
+}
+#mega .logo img {
+  max-height: 45px !important;
+  width: auto !important;
+}
+/* Navigation List */
+.navigation nav {
+  background-color: transparent !important;
+}
+.navigation nav ul {
+  display: flex !important;
+  align-items: center !important;
+  gap: 30px !important;
+  list-style: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+.navigation nav ul li {
+  display: inline-block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+/* Navigation Links */
+.navigation nav ul li a {
+  color: var(--kv-charcoal) !important;
+  font-family: 'Montserrat', sans-serif !important;
+  font-size: 0.95em !important;
+  font-weight: 500 !important;
+  padding: 10px 15px !important;
+  text-decoration: none !important;
+  transition: all 0.3s ease !important;
+  border-bottom: 3px solid transparent !important;
+  display: inline-block !important;
+}
+.navigation nav ul li a:hover {
+  color: var(--kv-gold-primary) !important;
+  border-bottom-color: var(--kv-gold-primary) !important;
+}
+.navigation nav ul li a.selected,
+.navigation nav ul li a:active {
+  color: var(--kv-gold-dark) !important;
+  border-bottom-color: var(--kv-gold-dark) !important;
+  font-weight: 600 !important;
+}
+/* ========================================
+   DROPDOWN MENU FIXES
+   ======================================== */
+/* Dropdown Container - Hide by Default */
+.pushdown-list[aria-hidden="true"] {
+  display: none !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+.pushdown-list[aria-hidden="false"] {
+  display: block !important;
+  max-height: 500px !important;
+  overflow: visible !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  transition: max-height 0.3s ease, opacity 0.3s ease !important;
+}
+/* Parent container for dropdown positioning */
+.navigation nav ul li.pushdown {
+  position: relative !important;
+}
+/* Dropdown Styling */
+.pushdown-list {
+  background-color: var(--kv-white) !important;
+  border: 1px solid var(--kv-grey-light) !important;
+  border-top: 3px solid var(--kv-gold-primary) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+  padding: 20px 25px !important;
+  position: absolute !important;
+  top: calc(100% + 5px) !important;
+  right: auto !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  min-width: 300px !important;
+  max-width: 400px !important;
+  width: max-content !important;
+  z-index: 1000 !important;
+  margin: 0 !important;
+  border-radius: 8px !important;
+}
+.pushdown-list h2 {
+  color: var(--kv-charcoal) !important;
+  font-size: 1.1em !important;
+  font-weight: 600 !important;
+  margin-bottom: 15px !important;
+  padding-bottom: 10px !important;
+  border-bottom: 2px solid var(--kv-gold-primary) !important;
+}
+.pushdown-list ul {
+  list-style: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0 !important;
+  background: none !important;
+}
+.pushdown-list ul li {
+  margin: 0 !important;
+  padding: 0 !important;
+  border-bottom: 1px solid var(--kv-grey-light) !important;
+  background: none !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+}
+.pushdown-list ul li:last-child {
+  border-bottom: none !important;
+}
+.pushdown-list ul li a {
+  color: var(--kv-charcoal) !important;
+  font-size: 0.95em !important;
+  font-weight: 500 !important;
+  text-decoration: none !important;
+  padding: 14px 20px !important;
+  margin: 0 !important;
+  display: block !important;
+  background: none !important;
+  background-color: transparent !important;
+  border: none !important;
+  border-left: 3px solid transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  transition: all 0.2s ease !important;
+  text-align: left !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+.pushdown-list ul li a:hover {
+  background-color: rgba(245, 166, 35, 0.08) !important;
+  color: var(--kv-gold-dark) !important;
+  border-left-color: var(--kv-gold-primary) !important;
+  padding-left: 24px !important;
+  border-radius: 0 !important;
+}
+/* Dropdown Arrow Indicator */
+.pushdown > a.pushdown {
+  cursor: pointer !important;
+  padding: 5px 10px !important;
+  margin-left: 5px !important;
+  font-size: 0.8em !important;
+  color: var(--kv-charcoal) !important;
+}
+/* ========================================
+   HORIZONTAL NAVIGATION BAR
+   ======================================== */
+.horizontal-nav {
+  background: linear-gradient(135deg, var(--kv-gold-primary) 0%, var(--kv-orange-accent) 100%) !important;
+  padding: 20px !important;
+  color: var(--kv-white) !important;
+  border-bottom: none !important;
+}
+.horizontal-nav h2 {
+  color: var(--kv-white) !important;
+  font-size: 1.8em !important;
+  font-weight: 600 !important;
+  margin: 0 !important;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
+}
+/* ========================================
+   MAIN CONTENT AREA
+   ======================================== */
+#main {
+  background-color: var(--kv-warm-white) !important;
+}
+/* Hero Section with Gradient */
+.row.amethyst.no-toc {
+  background: linear-gradient(135deg, var(--kv-gold-primary) 0%, var(--kv-orange-accent) 100%) !important;
+  color: var(--kv-white) !important;
+  padding: 60px 20px !important;
+}
+.row.amethyst.no-toc h1 {
+  color: var(--kv-white) !important;
+  font-size: 2.5em !important;
+  font-weight: 700 !important;
+  margin-bottom: 15px !important;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+}
+.row.amethyst.no-toc .subheader {
+  color: var(--kv-white) !important;
+  font-size: 1.2em !important;
+  font-weight: 300 !important;
+  line-height: 1.6 !important;
+}
+.row.amethyst.no-toc .anchor-list li a {
+  color: var(--kv-white) !important;
+  border: 2px solid var(--kv-white) !important;
+  padding: 10px 20px !important;
+  border-radius: 30px !important;
+  font-weight: 600 !important;
+  text-decoration: none !important;
+  transition: all 0.3s ease !important;
+}
+.row.amethyst.no-toc .anchor-list li a:hover {
+  background-color: var(--kv-white) !important;
+  color: var(--kv-gold-primary) !important;
+}
+/* ========================================
+   SECTION STYLING
+   ======================================== */
+/* Gray Section */
+.row.portal.gray {
+  background-color: var(--kv-warm-white) !important;
+  padding: 60px 20px !important;
+}
+.row.portal.gray h2 {
+  color: var(--kv-charcoal) !important;
+  font-size: 2em !important;
+  margin-bottom: 15px !important;
+  border-left: 5px solid var(--kv-gold-primary) !important;
+  padding-left: 15px !important;
+}
+.row.portal.gray .subheader {
+  color: var(--kv-text-secondary) !important;
+  font-size: 1.1em !important;
+  line-height: 1.6 !important;
+  margin-bottom: 30px !important;
+}
+/* Snow Section */
+.row.portal.snow {
+  background-color: var(--kv-white) !important;
+  padding: 60px 20px !important;
+}
+.row.portal.snow h2 {
+  color: var(--kv-charcoal) !important;
+  font-size: 2em !important;
+  margin-bottom: 15px !important;
+  border-left: 5px solid var(--kv-orange-accent) !important;
+  padding-left: 15px !important;
+}
+/* ========================================
+   CARD STYLING
+   ======================================== */
+.card {
+  background-color: var(--kv-white) !important;
+  border: 1px solid var(--kv-grey-light) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+  margin-bottom: 25px !important;
+  transition: transform 0.3s ease, box-shadow 0.3s ease !important;
+}
+.card:hover {
+  transform: translateY(-5px) !important;
+  box-shadow: 0 8px 20px rgba(245, 166, 35, 0.3) !important;
+}
+/* Card Variants */
+.card.snow {
+  background-color: var(--kv-warm-white) !important;
+  border-left: 4px solid var(--kv-gold-primary) !important;
+}
+.card.gray {
+  background-color: var(--kv-grey-light) !important;
+  border-left: 4px solid var(--kv-orange-accent) !important;
+}
+/* Title Styling in Cards */
+.title-snow-bg,
+.title-grey-bg {
+  background: linear-gradient(90deg, var(--kv-light-bg) 0%, transparent 100%) !important;
+  border-left: 5px solid var(--kv-gold-primary) !important;
+  padding: 15px !important;
+  margin-bottom: 20px !important;
+}
+.title-snow-bg h3,
+.title-grey-bg h3 {
+  color: var(--kv-charcoal) !important;
+  font-size: 1.5em !important;
+  font-weight: 600 !important;
+  margin: 0 !important;
+}
+/* ========================================
+   DESCRIPTION LISTS - ALIGNMENT FIX
+   ======================================== */
+/* Description List Container */
+.c-description-list {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 15px !important;
+  width: 100% !important;
+}
+/* Description List Group */
+.c-description-list__group {
+  display: grid !important;
+  grid-template-columns: 200px 1fr !important;
+  gap: 20px !important;
+  align-items: start !important;
+  padding: 10px 0 !important;
+  border-bottom: 1px solid var(--kv-grey-light) !important;
+}
+.c-description-list__group:last-child,
+.c-description-list__group.noline {
+  border-bottom: none !important;
+}
+/* Term (Label) */
+.c-description-list__term {
+  color: var(--kv-text-secondary) !important;
+  font-weight: 600 !important;
+  font-size: 0.95em !important;
+  text-align: left !important;
+  padding-right: 10px !important;
+}
+/* Detail (Value) */
+.c-description-list__detail {
+  color: var(--kv-text-primary) !important;
+  font-size: 0.95em !important;
+  word-wrap: break-word !important;
+  overflow-wrap: break-word !important;
+}
+.c-description-list__detail .c-description-list__term {
+  font-weight: 400 !important;
+}
+/* For horizontal layout variant */
+.c-description-list--horizontal .c-description-list__group {
+  grid-template-columns: 180px 1fr !important;
+}
+/* For short terms variant */
+.c-description-list--terms-short .c-description-list__group {
+  grid-template-columns: 150px 1fr !important;
+}
+/* ========================================
+   BUTTONS & LINKS
+   ======================================== */
+a {
+  color: var(--kv-gold-primary) !important;
+  transition: color 0.2s ease !important;
+}
+a:hover {
+  color: var(--kv-gold-dark) !important;
+}
+.button {
+  background-color: var(--kv-gold-primary) !important;
+  color: var(--kv-white) !important;
+  border: none !important;
+  padding: 12px 30px !important;
+  border-radius: 30px !important;
+  font-family: 'Montserrat', sans-serif !important;
+  font-weight: 600 !important;
+  font-size: 1em !important;
+  cursor: pointer !important;
+  transition: all 0.3s ease !important;
+  text-decoration: none !important;
+  display: inline-block !important;
+}
+.button:hover {
+  background-color: var(--kv-gold-dark) !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 4px 12px rgba(245, 166, 35, 0.4) !important;
+}
+/* Anchor List Styling */
+.anchor-list {
+  list-style: none !important;
+  padding: 0 !important;
+  display: flex !important;
+  gap: 15px !important;
+  flex-wrap: wrap !important;
+}
+.anchor-list li {
+  margin: 0 !important;
+}
+.anchor-list li a {
+  color: var(--kv-gold-dark) !important;
+  font-weight: 600 !important;
+  text-decoration: none !important;
+  padding: 8px 16px !important;
+  border-radius: 20px !important;
+  border: 2px solid var(--kv-gold-primary) !important;
+  transition: all 0.3s ease !important;
+  display: inline-block !important;
+}
+.anchor-list li a:hover {
+  background-color: var(--kv-gold-primary) !important;
+  color: var(--kv-white) !important;
+}
+/* ========================================
+   TABLES
+   ======================================== */
+table {
+  border-collapse: collapse !important;
+  width: 100% !important;
+  background-color: var(--kv-white) !important;
+}
+table thead {
+  background: linear-gradient(135deg, var(--kv-gold-primary) 0%, var(--kv-orange-accent) 100%) !important;
+  color: var(--kv-white) !important;
+}
+table thead th {
+  padding: 12px !important;
+  font-weight: 600 !important;
+  text-align: left !important;
+  border: none !important;
+}
+table tbody tr {
+  border-bottom: 1px solid var(--kv-grey-light) !important;
+}
+table tbody tr:nth-child(odd) {
+  background-color: var(--kv-warm-white) !important;
+}
+table tbody tr:hover {
+  background-color: var(--kv-light-bg) !important;
+}
+table td {
+  padding: 10px 12px !important;
+  color: var(--kv-text-primary) !important;
+}
+/* ========================================
+   CODE BLOCKS
+   ======================================== */
+pre,
+code,
+.syntax {
+  background-color: var(--kv-warm-white) !important;
+  border-left: 3px solid var(--kv-gold-primary) !important;
+  padding: 10px !important;
+  font-family: 'Courier New', monospace !important;
+  color: var(--kv-charcoal) !important;
+  border-radius: 4px !important;
+  display: inline-block !important;
+  max-width: 100% !important;
+  word-wrap: break-word !important;
+}
+.syntax {
+  display: inline !important;
+  padding: 2px 6px !important;
+}
+/* ========================================
+   FOOTER / CTA BOTTOM
+   ======================================== */
+#cta-bottom {
+  background: linear-gradient(135deg, var(--kv-charcoal) 0%, var(--kv-charcoal-light) 100%) !important;
+  color: var(--kv-white) !important;
+  padding: 40px !important;
+  text-align: center !important;
+}
+#cta-bottom a {
+  color: var(--kv-white) !important;
+  text-decoration: underline !important;
+  font-weight: 600 !important;
+}
+#cta-bottom a:hover {
+  color: var(--kv-gold-light) !important;
+}
+/* ========================================
+   UTILITY CLASSES
+   ======================================== */
+.border-top-gap {
+  border-top: 1px solid var(--kv-grey-light) !important;
+  margin-top: 20px !important;
+  padding-top: 20px !important;
+}
+/* ========================================
+   RESPONSIVE ADJUSTMENTS
+   ======================================== */
+@media (max-width: 768px) {
+  .navigation nav ul {
+    flex-direction: column !important;
+    gap: 10px !important;
+  }
+  
+  .navigation nav ul li {
+    width: 100% !important;
+  }
+  
+  .navigation nav ul li a {
+    display: block !important;
+    text-align: center !important;
+  }
+  
+  .horizontal-nav h2 {
+    font-size: 1.4em !important;
+  }
+  
+  .row.amethyst.no-toc h1 {
+    font-size: 2em !important;
+  }
+  
+  /* Mobile description list */
+  .c-description-list__group {
+    grid-template-columns: 1fr !important;
+    gap: 5px !important;
+  }
+  
+  .c-description-list__term {
+    padding-bottom: 5px !important;
+  }
+}
+/* ========================================
+   CUSTOM KOLIBRI VISION ACCENTS
+   ======================================== */
+/* Gradient Underline Effect */
+.kv-gradient-underline::after {
+  content: '';
+  display: block;
+  width: 60px;
+  height: 3px;
+  background: linear-gradient(90deg, var(--kv-gold-primary) 0%, var(--kv-orange-accent) 100%);
+  margin-top: 10px;
+}</style>
+</head>
+<body>
+    <div id="wrap">
+        <div id="mega">
+            <header>
+                <div class="utilities">
+                </div>
+            
+                    <div class="navigation">
+                        <nav class="navigation">
+                            <ul>
+                                <li class="logo">
+                                    <a class="mega-logo" style=" margin-right:15px;">
+                                        <img style="display: block; width: auto; height: auto; max-width: 150px; max-height: 30px; margin: 15px;" src="data:image/png;base64,UklGRvAHAABXRUJQVlA4WAoAAAAgAAAAswAAswAASUNDUMgBAAAAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADZWUDggAgYAAJAkAJ0BKrQAtAA+USiQRaOioZOc/Cw4BQSxt3C6UIQJH/O9hFZDrH5O/lp0kOune78lefUP36X+236f7hvYz9hv3Je4B+j3+E/r/7o9ojzAfzj+xf8//H++N6G/8T6gH9+/0XWAegB5Yv7b/B3+1n7U/Ad+wP/a1lDyrZwxi9zN3imm/pbGieY7/iIukkft0kfs3ugtAIXM5wNw7LKi+fBCEqE8XkGsS4qIQDHD4eWbtNWVFyFK4GpbfjRKrsHAKaM35HZPf08wVIAzQNNnbPW/ZEQF7JQG3qaGOOytNs7HjHdrkys4Hy2EkrXZ2bH/jC+Z+Jzhfp021lUgqffnYzKYMnTdBS7XWZRr+yACmbN4iVUbkFIAN/Yru+33OeSP26SR+3SSP26SR+3SOQAA/v/BnA3RZz1Ajfw2b79JOLOS5SkX+Apwgz7TkjZXxl5CpaxJoy/fMppOAOr/fWfCUAwHMnEgDcFpOcNk65t+EoP7kOJlt3j28sPKYglJcWcroiXPmudUUM7Qf/xcev29IitYmARg3+XRzvysUQJP01qOPmed8y+3w022zVcIPnpeOvegKNKbfK+IN3LjE0avwIMvnoKtxEENATVsApVJNb8B96igqlrWTLY4z7NSKaefjNkOuH0twMnMKEcc4hgCISwnWxFM/QUFEwfAQXAU11Y7+f0cQ7who+LZePgq2R+GiwYYwBly+p/W7dwk/lnZTrqrWgjDFvG/binnI42gxZM8P9qHLdr3j/q5G6yvme8ojU6REaSW+71Wv8X323+ldEQhAPZg3zZmOGALab+sQElL+3Kh1MZclLePe1i/aRTNO0v19iptx+GCjw45lmaXFg1p195bI2MACnFZP+u7YeUYhw/X2Qf+ZZFerPiXjd2jvWIaLKFQyBISzdVVTOGAymXWtr9D78KjbEAsHRyWp2KXaB2b+mMMPHZDEmv75t5gkCbals5rHP1AWDbz+btUYsL/wYMuCyE6czgx6VJqHtr3J6a8KLAwO6h9kCY7CQg/+DEJYgqYUHwKU28RSvd9aciW2gC+nkcsoyV0c8Z6BzmSZ5ypEXm5jJZe4cOeeReWeOUgi8oHb5+FmaQZDb7qNSdIKvJopvY6qnjIKJ/tMJLxWMwe8Zp7tQG8jm2hHauNphfer/ERv+BKJJrXqWMi/A/kAOAfxnoIknsQ2iOrSSSMAOP9Y9AQBj+pl2op+SORC6Pj4JHs37jJ8862cQShXyQ0SjzKSkvKvUODr9zgv8tQMO8VzR2ArAH63CJbPrgZU4rMpBt2l49K5oTBULlvC5Ezz0Qp5cv+0HO0vRfA0+e9WIB+lv+F05L/gQXKNouwwZkoSp7LqpkCEyQ8vNTj4336IxbcqFghk19O+7FSkqG6Pq+JBtUrpLlcQflrqkEkeuEm6/XtSNA2fnaFnsQry6EGriA3UyNsfm9iOnsDNqkqfk7zkZeXQ7MsSAboJUh37qy+fCNYRUwc9A5T/MZjob11/6OF1iMyBAgk5Ms1qaLgIvd2ErgBhH8gg3V40EX9kP3R7xOfao4J8ZXbXFEtZGvVNfmgeHdH9LiDkusxKcZ4xo6E5fZrCXpp8elCLAicmwOAU882Zm/3KIBO15cOZEXJueXHsPA4NlVnxBYRxcXtC+SJh/2MwpHf8IWZjGBqLpGK8iCU5DoYYWwr6KUkXUVFkX34f6/L949k+aW7aHTt3l5g/uTg+2gs/FAEwTT//QoQ/P/o3Zm1IflMRAT+oJwzdbGzKs0DVS4zJAzMc00ct7WUazmwy7fYuijxrPVgfElT47irzzcO8a/NEliHtkNVW+km8r+LUkORSAAovPbgq1FZhd5JfLlV8CkbeJq8rnudl9VWE0T+f8OvkRBN/sdEtZzP2SsfC5pA36Hzp/Ngit0zAnUQtDCUYCJCseGSMXw4BZ1yvoEi34bo5FA24snCbNl/Y9nY+SeIswNWGi4p3xELJFzwWDCKn5p7LcMOMkOgABtiRxBk1tYkQvNDp0ceKz7MZ8MvpLSL7qsMLXTWHqlpvG4KGJaM/IxFV8AAAAAA" alt="Kolibri vision">
+                                        <span class=" external"></span>
+                                    </a>
+                                </li>
+                            <li><a href="#anchor-1" >General Information</a></li>
+                            <li><a href="#anchor-2" >Data Model</a></li>
+                            <li><a href="#anchor-3" >Measures</a></li>
+                            <li><a href="#anchor-5" >Variables</a></li>
+                            <li class="pushdown">
+                                <a href="#anchor-6">Sheets & Visualizations</a><a class="pushdown" style="font-size: 12px; cursor: pointer;">▼</a>
+                                <div class="pushdown-list documentation-list " id="mega-onboarding-list" aria-hidden="true">
+                                    <div role="tabpanel" id="tabs2_tab1_panel" class="tabpanel active">
+                                        <div>
+                                            <h2>List of sheets in app</h2>
+                                            <ul>
+                                                
+                                                    <li><a tabindex="0" href="#id-HXTnmnv">My new sheet</a></li>
+                                                    
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                            </li>
+                            
+                            
+                        </ul>
+                    </nav>
+                </div>
+            </header>
+        </div>
+        <nav class="horizontal-nav">
+            <h2>Created:</b> 13-01-26 11:24:55</h2>
+        </nav>
+
+        <main id="main" tabindex="-1" class="">
+            <div id="mc-main-content">
+                <div>
+                    <div class="row amethyst no-toc"
+                        <div class="container">
+                            <div class="col-12 nopadding">
+                                <h1>Testa publicera</h1>
+                                <p class="subheader"> <span><b>Technical Documentation</b></span></p>
+                                <br>
+                                <p class="subheader">This technical documentation serves as a comprehensive guide to
+                                    understanding the structure, components, and functionalities of the Qlik App. It
+                                    provides detailed insights into the data model, script transformations,
+                                    calculated
+                                    measures and dimensions, sheets, associated visualizations, and variables
+                                    utilized
+                                    within the application. The documentation is generated directly from the app
+                                    metadata using DocuGen, ensuring accuracy and reliability.</p>
+                                <br>
+                                <ul class="anchor-list">
+                                    <li><a href="https://ce3teu1mygwc3rt.eu.qlikcloud.com/sense/app/2a7487a4-e2ab-45a2-8d06-bfe377c3e73a/overview"
+                                            style="font-weight: 600; font-size: 1.2em; color: #006937; text-decoration: none;">Jump
+                                            to app</a></li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+            
+                    <!-- Section General Information-->
+                    <section id="anchor-1">
+                        <div class="row portal gray">
+                            <div class="container">
+                                <h2 tabindex="-1">General Information</h2>
+                                <p class="subheader">This section provides essential details and statistics regarding
+                                    the App, including its name, description, unique ID, ownership information,
+                                    creation, modification, and reload times, as well as its size in the system.</p>
+                                <br>
+                                <div class="card snow">
+                                        <div class="col-12" style="padding-left: 40px; padding-bottom:20px;">
+                                            <div class="title-snow-bg">
+                                                <h3>Application details:</h3>
+                                            </div>
+                                        </div>
+                                        
+                                        <dl style="margin: 30px 20px;" class="card-content c-description-list c-description-list--horizontal c-description-list--terms-short">
+                                            
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    Name:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        Testa publicera
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    Description:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    ID:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        2a7487a4-e2ab-45a2-8d06-bfe377c3e73a
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    Resource Type:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        app
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    Usage:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        ANALYTICS
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    Owner:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        rikard.larsson@kolibrivision.se
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    Published:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        False
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    Publish Time:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        2026-01-13T10:24:47.782Z
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    Space ID:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        696618c3e4857cf388965645
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    Has Section Access:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        False
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    Is encrypted:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        True
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    Created Date:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        13.01.2026 10:05:32 
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    Modified Date:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        13.01.2026 10:24:47 
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    Last Reload Time:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        13.01.2026 10:24:19 
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                          <div class="c-description-list__group">
+                                              <dt class="c-description-list__term" style="font-weight: bold;">
+                                                  App Memory Footprint:
+                                              </dt>
+                                              <dd class="c-description-list__detail">
+                                                  <span class="c-description-list__term">
+                                                      0,00 MB
+                                                  </span>
+                                              </dd>
+                                          </div>
+                                          <div class="c-description-list__group">
+                                              <dt class="c-description-list__term" style="font-weight: bold;">
+                                                  App Reload Peak RAM:
+                                              </dt>
+                                              <dd class="c-description-list__detail">
+                                                  <span class="c-description-list__term">
+                                                      3,70 MB
+                                                  </span>
+                                              </dd>
+                                          </div>
+                                        </dl>
+                                </div>
+                            </div>
+                        </div>
+                    </section>    
+                    <!-- Section Data Model -->
+                    <section id="anchor-2">
+                        <div class="row portal snow">
+                            <div class="container">
+                                <h2 id="anchor-1" tabindex="-1">Data Model</h2>
+                                <p class="subheader">The data model section outlines the schema and relationships
+                                    between different data entities within the Qlik App. It includes information on
+                                    tables, fields, keys, and associations, providing a clear understanding of how data
+                                    is organized and interconnected.</p>
+                                <br>                                  
+                        
+            
+                    
+                                <div class="card">
+                                    <div class="col-12" style="padding-left: 40px; padding-bottom:20px;">
+                                        <div class="title-grey-bg">
+                                            <h3>INLFED <p style="display: contents;">(table)</p></h3>
+                                        </div>
+                                    </div>
+                                    <div class="col-6">
+                                        <div class="card-content" style="padding: 0px 0px 0px 40px;">
+                                            <dl style="margin: 30px 0px 30px 20px;" class="c-description-list  c-description-list--horizontal c-description-list--terms-short">
+                                                <div class="c-description-list__group">
+                                                    <dt class="c-description-list__term" style="font-weight: bold;">
+                                                        Number of Rows:
+                                                    </dt>
+                                                    <dd class="c-description-list__detail">
+                                                        <span class="c-description-list__term">
+                                                            0
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                                <div class="c-description-list__group">
+                                                    <dt class="c-description-list__term" style="font-weight: bold;">
+                                                        Number of Fields:
+                                                    </dt>
+                                                    <dd class="c-description-list__detail">
+                                                        <span class="c-description-list__term">
+                                                            1
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                                <div class="c-description-list__group">
+                                                    <dt class="c-description-list__term" style="font-weight: bold;">
+                                                        Number of Key Fields:
+                                                    </dt>
+                                                    <dd class="c-description-list__detail">
+                                                        <span class="c-description-list__term">
+                                                            0
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                            </dl>
+                                        </div>
+                                    </div>
+                                    <div class="col-6">
+                                        <div class="card-content" style="padding: 0px 40px 0px 0px;">
+                                            <dl style="margin: 30px 0px 30px 20px;" class="c-description-list  c-description-list--horizontal c-description-list--terms-short">
+                                                <div class="c-description-list__group">
+                                                    <dt class="c-description-list__term" style="font-weight: bold;">
+                                                        Is Loose:
+                                                    </dt>
+                                                    <dd class="c-description-list__detail">
+                                                        <span class="c-description-list__term">
+                                                            False
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                                <div class="c-description-list__group">
+                                                    <dt class="c-description-list__term" style="font-weight: bold;">
+                                                        Comment:
+                                                    </dt>
+                                                    <dd class="c-description-list__detail">
+                                                        <span class="c-description-list__term">
+                                                            <br>
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                                <div class="c-description-list__group">
+                                                    <dt class="c-description-list__term" style="font-weight: bold;">
+                                                        Table Size:
+                                                    </dt>
+                                                    <dd class="c-description-list__detail">
+                                                        <span class="c-description-list__term">
+                                                            0,00 MB
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                            </dl>
+                                        </div>
+                                    </div>
+                                    <div class="card-content" style="padding: 0px 40px 20px;">
+                                        <div class="table-wrapper">
+                                            <table class="TableStyle-tableGrid" cellspacing="0">
+                                                <colgroup>
+                                                    <col>
+                                                    <col>
+                                                    <col>
+                                                    <col>
+                                                    <col>
+                                                    <col>
+                                                    <col>
+                                                </colgroup>
+                                                <thead>
+                                                    <tr>
+                                                        <th scope="col" class="HeadI--">Field Name</th>
+                                                        <th scope="col" class="HeadI--">Distinct Values</th>
+                                                        <th scope="col" class="HeadI--">Non-Null Values</th>
+                                                        <th scope="col" class="HeadI--">Tags</th>
+                                                        <th scope="col" class="HeadI--">Is Hidden</th>
+                                                        <th scope="col" class="HeadI--">Is Key</th>
+                                                        <th scope="col" class="HeadG--">Connected Tables</th></tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr>
+                                                        <td class="BodyI--"><span class="statement">1</span></td>
+                                                        <td class="BodyI--">0</td>
+                                                        <td class="BodyI--">0</td>
+                                                        <td class="BodyI--"></td>
+                                                        <td class="BodyI--">No</td>
+                                                        <td class="BodyI--">No</td>
+                                                        <td class="BodyG--"></td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                                <br>
+            
+                    
+                                <div class="card">
+                                    <div class="col-12" style="padding-left: 40px; padding-bottom:20px;">
+                                        <div class="title-grey-bg">
+                                            <h3>Test <p style="display: contents;">(table)</p></h3>
+                                        </div>
+                                    </div>
+                                    <div class="col-6">
+                                        <div class="card-content" style="padding: 0px 0px 0px 40px;">
+                                            <dl style="margin: 30px 0px 30px 20px;" class="c-description-list  c-description-list--horizontal c-description-list--terms-short">
+                                                <div class="c-description-list__group">
+                                                    <dt class="c-description-list__term" style="font-weight: bold;">
+                                                        Number of Rows:
+                                                    </dt>
+                                                    <dd class="c-description-list__detail">
+                                                        <span class="c-description-list__term">
+                                                            199
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                                <div class="c-description-list__group">
+                                                    <dt class="c-description-list__term" style="font-weight: bold;">
+                                                        Number of Fields:
+                                                    </dt>
+                                                    <dd class="c-description-list__detail">
+                                                        <span class="c-description-list__term">
+                                                            1
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                                <div class="c-description-list__group">
+                                                    <dt class="c-description-list__term" style="font-weight: bold;">
+                                                        Number of Key Fields:
+                                                    </dt>
+                                                    <dd class="c-description-list__detail">
+                                                        <span class="c-description-list__term">
+                                                            0
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                            </dl>
+                                        </div>
+                                    </div>
+                                    <div class="col-6">
+                                        <div class="card-content" style="padding: 0px 40px 0px 0px;">
+                                            <dl style="margin: 30px 0px 30px 20px;" class="c-description-list  c-description-list--horizontal c-description-list--terms-short">
+                                                <div class="c-description-list__group">
+                                                    <dt class="c-description-list__term" style="font-weight: bold;">
+                                                        Is Loose:
+                                                    </dt>
+                                                    <dd class="c-description-list__detail">
+                                                        <span class="c-description-list__term">
+                                                            False
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                                <div class="c-description-list__group">
+                                                    <dt class="c-description-list__term" style="font-weight: bold;">
+                                                        Comment:
+                                                    </dt>
+                                                    <dd class="c-description-list__detail">
+                                                        <span class="c-description-list__term">
+                                                            <br>
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                                <div class="c-description-list__group">
+                                                    <dt class="c-description-list__term" style="font-weight: bold;">
+                                                        Table Size:
+                                                    </dt>
+                                                    <dd class="c-description-list__detail">
+                                                        <span class="c-description-list__term">
+                                                            0,00 MB
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                            </dl>
+                                        </div>
+                                    </div>
+                                    <div class="card-content" style="padding: 0px 40px 20px;">
+                                        <div class="table-wrapper">
+                                            <table class="TableStyle-tableGrid" cellspacing="0">
+                                                <colgroup>
+                                                    <col>
+                                                    <col>
+                                                    <col>
+                                                    <col>
+                                                    <col>
+                                                    <col>
+                                                    <col>
+                                                </colgroup>
+                                                <thead>
+                                                    <tr>
+                                                        <th scope="col" class="HeadI--">Field Name</th>
+                                                        <th scope="col" class="HeadI--">Distinct Values</th>
+                                                        <th scope="col" class="HeadI--">Non-Null Values</th>
+                                                        <th scope="col" class="HeadI--">Tags</th>
+                                                        <th scope="col" class="HeadI--">Is Hidden</th>
+                                                        <th scope="col" class="HeadI--">Is Key</th>
+                                                        <th scope="col" class="HeadG--">Connected Tables</th></tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr>
+                                                        <td class="BodyI--"><span class="statement">test</span></td>
+                                                        <td class="BodyI--">1</td>
+                                                        <td class="BodyI--">199</td>
+                                                        <td class="BodyI--">numeric<br>integer</td>
+                                                        <td class="BodyI--">No</td>
+                                                        <td class="BodyI--">No</td>
+                                                        <td class="BodyG--"></td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                                <br>
+                            </div>
+                        </div>
+                    </section>
+                    <!-- Section Measures -->
+                    <section id="anchor-3">
+                        <div class="row portal gray">
+                            <div class="container">
+                                <h2 tabindex="-1">Measures</h2>
+                                <p class="subheader">This section presents each user-defined measure with its business
+                                    label, description, calculation format, technical name, and corresponding tags. By
+                                    exploring these details, users can gain a deeper understanding of the measures
+                                    employed within the application and their significance in driving analytical
+                                    insights.</p>
+                                <br>
+                        
+            
+                                <div class="card snow">
+                                    <div class="col-12" style="padding-left: 40px; padding-bottom:20px;">
+                                        <div class="title-snow-bg">
+                                            <h3>Test <p style="display: contents;">(measure)</p></h3>
+                                        </div>
+                                    </div>
+                                    <dl style="margin: 30px 20px;" class="card-content c-description-list c-description-list--horizontal c-description-list--terms-short">
+                                        <div class="c-description-list__group">
+                                            <dt class="c-description-list__term" style="font-weight: bold;">
+                                                Label:
+                                            </dt>
+                                            <dd class="c-description-list__detail">
+                                                <span class="c-description-list__term">
+                                                    Test
+                                                </span>
+                                            </dd>
+                                        </div>
+                                        <div class="c-description-list__group">
+                                            <dt class="c-description-list__term" style="font-weight: bold;">
+                                                Description:
+                                            </dt>
+                                            <dd class="c-description-list__detail">
+                                                <span class="c-description-list__term">
+                                                    
+                                                </span>
+                                            </dd>
+                                        </div>
+                                        <div class="c-description-list__group">
+                                            <dt class="c-description-list__term" style="font-weight: bold;">
+                                                ID:
+                                            </dt>
+                                            <dd class="c-description-list__detail">
+                                                <span class="c-description-list__term">
+                                                    JJuFESS
+                                                </span>
+                                            </dd>
+                                        </div>
+                                        <div class="c-description-list__group">
+                                            <dt class="c-description-list__term" style="font-weight: bold;">
+                                                Definition:
+                                            </dt>
+                                            <dd class="c-description-list__detail">
+                                                <span class="c-description-list__term">
+                                                    <p class="syntax">1</p>
+                                                </span>
+                                            </dd>
+                                        </div>
+                                        <div class="c-description-list__group">
+                                            <dt class="c-description-list__term" style="font-weight: bold;">
+                                                Expression:
+                                            </dt>
+                                            <dd class="c-description-list__detail">
+                                                <span class="c-description-list__term">
+                                                    
+                                                </span>
+                                            </dd>
+                                        </div>
+                                        <div class="c-description-list__group">
+                                            <dt class="c-description-list__term" style="font-weight: bold;">
+                                                Grouping:
+                                            </dt>
+                                            <dd class="c-description-list__detail">
+                                                <span class="c-description-list__term">
+                                                    No
+                                                </span>
+                                            </dd>
+                                        </div>
+                                        <div class="c-description-list__group">
+                                            <dt class="c-description-list__term" style="font-weight: bold;">
+                                                Custom Formatted:
+                                            </dt>
+                                            <dd class="c-description-list__detail">
+                                                <span class="c-description-list__term">
+                                                    Yes
+                                                </span>
+                                            </dd>
+                                        </div>
+                                        <div class="c-description-list__group">
+                                            <dt class="c-description-list__term" style="font-weight: bold;">
+                                                Format Type:
+                                            </dt>
+                                            <dd class="c-description-list__detail">
+                                                <span class="c-description-list__term">
+                                                    Unknown
+                                                </span>
+                                            </dd>
+                                        </div>
+                                        <div class="c-description-list__group">
+                                            <dt class="c-description-list__term" style="font-weight: bold;">
+                                                Format:
+                                            </dt>
+                                            <dd class="c-description-list__detail">
+                                                <span class="c-description-list__term">
+                                                    <p class="Code"></p>
+                                                </span>
+                                            </dd>
+                                        </div>
+                                        <div class="c-description-list__group">
+                                            <dt class="c-description-list__term" style="font-weight: bold;">
+                                                Color:
+                                            </dt>
+                                            <dd class="c-description-list__detail">
+                                                <span class="c-description-list__term">
+                                                    <p style="color: "></p>
+                                                </span>
+                                            </dd>
+                                        </div>
+                                        <div class="c-description-list__group">
+                                            <dt class="c-description-list__term" style="font-weight: bold;">
+                                                Tags:
+                                            </dt>
+                                            <dd class="c-description-list__detail">
+                                                <span class="c-description-list__term">
+                                                    
+                                                </span>
+                                            </dd>
+                                        </div>
+                                    </dl>
+                                </div>
+                                <br>
+        
+                            </div>
+                        </div>
+                    </section>        
+                    <!-- Section Variables -->
+                    <section id="anchor-5">
+                        <div class="row portal gray">
+                            <div class="container">
+                                <h2 tabindex="-1">Variables</h2>
+                                <p class="subheader">This section compiles comprehensive details for each variable,
+                                    including its unique identifier, title, definition, developer comments, and
+                                    corresponding tags. By understanding the role and usage of these variables, users
+                                    can effectively leverage their capabilities within the application.</p>
+                                <br>
+                        
+                                <dl class="c-description-list  c-description-list--horizontal  c-description-list--terms-short">
+                                    
+                                    <div class="card snow">
+                                        <div class="col-12" style="padding-left: 40px; padding-bottom:20px">
+                                            <div class="title-snow-bg">
+                                                <h3>v <p style="display: contents;">(variable)</p></h3>
+                                            </div>
+                                        </div>
+                                        <dl style="margin: 30px 20px;" class="card-content c-description-list c-description-list--horizontal c-description-list--terms-short">
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    ID:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        a562950f-9d73-496b-b389-3bf519ea8d5b
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    Definition:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        <p class="syntax">1</p>
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    Comment:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                            <div class="c-description-list__group">
+                                                <dt class="c-description-list__term" style="font-weight: bold;">
+                                                    Tags:
+                                                </dt>
+                                                <dd class="c-description-list__detail">
+                                                    <span class="c-description-list__term">
+                                                        
+                                                    </span>
+                                                </dd>
+                                            </div>
+                                        </dl>
+                                    </div>
+                                </dl>
+                            </div>
+                        </div>
+                    </section>
+                    <!-- Section Sheets and Visualizations -->
+                    <section id="anchor-6">
+                        <div class="row portal snow">
+                            <div class="container">
+                                <h2 id="anchor-1" tabindex="-1">Sheets and Visualizations</h2>
+                                <p class="subheader">This section provides a comprehensive exploration of the various
+                                    sheets within the Qlik App, accompanied by insights into their purpose,
+                                    visualization layout, and the data insights they offer. Each sheet is presented with
+                                    its unique identifier, a brief description, and details regarding the number and
+                                    types of objects it contains. Additionally, individual visualizations are
+                                    highlighted, showcasing their identifiers, titles, types, and the
+                                    measures/dimensions utilized, if applicable.</p>
+                                <br>
+                        
+                                    <div class="card" id="id-HXTnmnv">
+                                        <div class="col-12" style="padding-left: 40px; padding-bottom:20px;">
+                                            <div class="title-grey-bg">
+                                                <h3>My new sheet <p style="display: contents;">(sheet)</p>
+                                                </h3>
+                                                <ul class="anchor-list" style="float:right;">
+                                                    <li class="jump-to-sheet"><a href="https://ce3teu1mygwc3rt.eu.qlikcloud.com/sense/app/2a7487a4-e2ab-45a2-8d06-bfe377c3e73a/sheet/HXTnmnv/state/analysis"  target="_blank" style="font-weight: 600; font-size: 1em; color: #006937; border-bottom:none;">Jump to sheet</a></li>
+                                                </ul>
+                                            </div>
+                                        </div>                         
+                            
+                                        <div class="col-6">
+                                            <div class="card-content" style="padding: 0px 0px 0px 40px;">
+                                                <dl style="margin: 30px 0px 30px 20px;" class="c-description-list c-description-list--horizontal    c-description-list--terms-short">
+                                                    <div class="c-description-list__group">
+                                                        <dt class="c-description-list__term" style="font-weight: bold;">
+                                                            Type:
+                                                        </dt>
+                                                        <dd class="c-description-list__detail">
+                                                            <span class="c-description-list__term">
+                                                                <i>Public</i> sheet (managed space)
+                                                            </span>
+                                                        </dd>
+                                                    </div>
+                                          <div class="c-description-list__group">
+                                            <dt class="c-description-list__term" style="font-weight: bold;">
+                                              ID:
+                                            </dt>
+                                            <dd class="c-description-list__detail">
+                                              <span class="c-description-list__term">
+                                                HXTnmnv
+                                              </span>
+                                            </dd>
+                                          </div>
+                                          <div class="c-description-list__group">
+                                            <dt class="c-description-list__term" style="font-weight: bold;">
+                                              Description:
+                                            </dt>
+                                            <dd class="c-description-list__detail">
+                                              <span class="c-description-list__term">
+                                                
+                                              </span>
+                                            </dd>
+                                          </div>
+                                            </dl>
+                                        </div>
+                                    </div>
+                                  <div class="col-6">
+                                        <div class="card-content" style="padding: 0px 40px 0px 0px;">
+                                            <dl style="margin: 30px 0px 30px 20px;" class="c-description-list c-description-list--horizontal   c-description-list--terms-short">
+                                                <div class="c-description-list__group">
+                                          <dt class="c-description-list__term" style="font-weight: bold;">
+                                            Grid Resolution:
+                                          </dt>
+                                          <dd class="c-description-list__detail">
+                                            <span class="c-description-list__term">
+                                              
+                                            </span>
+                                          </dd>
+                                        </div>
+                                                    <div class="c-description-list__group">
+                                                        <dt class="c-description-list__term" style="font-weight: bold;">
+                                                            Sheet Mode:
+                                                        </dt>
+                                                        <dd class="c-description-list__detail">
+                                                            <span class="c-description-list__term">
+                                                                responsive
+                                                            </span>
+                                                        </dd>
+                                                    </div>
+                                                <div class="c-description-list__group noline">
+                                                    <dt class="c-description-list__term" style="font-weight: bold;">
+                                                        Objects:
+                                                    </dt>
+                                                        <dd class="c-description-list__detail">
+                                                            <span class="c-description-list__term">
+                                                                <ul class="threecolumns">
+                                                                    <li>linechart: 1</li>
+                                                                </ul>
+                                                            </span>
+                                                        </dd>
+                                                    </div>
+                                                </dl>
+                                                </dl>
+                                             </div>
+                                        </div>
+                                        <div class="col-12" style="padding: 0px 60px 20px; border-bottom: 1px solid rgba(84, 86, 90, .25);">
+                                            <!-- <p>PICTURE GOES HERE</p> -->
+                                        </div>
+                                        
+                                        <div class="col-12 border-top-gap" style="padding-left: 60px; padding-bottom:0px; border-bottom: 1px solid rgba(84, 86, 90, .25)">
+                                            <h4>Visualization No. 1</h4>
+                                            <ul class="anchor-list" style="float:right;">
+                                                <li><a href="https://ce3teu1mygwc3rt.eu.qlikcloud.com/single/?appid=2a7487a4-e2ab-45a2-8d06-bfe377c3e73a&obj=wUtQAV" target="_blank" style="font-weight: 600; font-size: 1em; color: #006937; border-bottom:none;">jump to object</a></li>
+                                                
+                                            </ul>
+                                            <dl style="margin: 30px 20px;" class="c-description-list c-description-list--horizontal c-description-list--terms-short">
+                                                <div class="c-description-list__group">
+                                                    <dt class="c-description-list__term" style="font-weight: bold;">
+                                                        Type:
+                                                    </dt>
+                                                    <dd class="c-description-list__detail">
+                                                        <span class="c-description-list__term">
+                                                            linechart
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                                <div class="c-description-list__group">
+                                                    <dt class="c-description-list__term" style="font-weight: bold;">
+                                                        ID:
+                                                    </dt>
+                                                    <dd class="c-description-list__detail">
+                                                        <span class="c-description-list__term">
+                                                            wUtQAV
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                                <div class="c-description-list__group">
+                                                    <dt class="c-description-list__term" style="font-weight: bold;">
+                                                        Color Mode:
+                                                    </dt>
+                                                    <dd class="c-description-list__detail">
+                                                        <span class="c-description-list__term">
+                                                            primary
+                                                        </span>
+                                                    </dd>
+                                                </div>                           
+                                <div class="c-description-list__group">
+                                  <dt class="c-description-list__term" style="font-weight: bold;">Dimensions:</dt>
+                                                    <dd class="c-description-list__detail">
+                                                        <span class="c-description-list__term">
+                                                            <b>1:</b><br>
+                                                            <p class="syntax">1</p><br><br>
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                <div class="c-description-list__group">
+                                  <dt class="c-description-list__term" style="font-weight: bold;">
+                                      Measures:
+                                    </dt>
+                                                    <dd class="c-description-list__detail">
+                                                        <span class="c-description-list__term">
+                                                            <b>Sum([test]):</b><br>
+                                                            <p class="syntax">Sum([test])</p><br><br>
+                                                        </span>
+                                                    </dd>
+                                                </div>
+                                            </dl>
+                                        </div>
+                                    </div>
+                                        <br>
+                            </div>
+                        </div>
+                    </section>           
+                    <div id="cta-bottom">
+                        <div class="row">
+                            <div class="container">
+                                <p>
+                                    <span style="float:right;"><a href="#anchor-1">BACK TO TOP</a></span>
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+</body>
+
+<script>
+const sections=document.querySelectorAll("section[id]");var obj=document.getElementById("main");function navHighlighter(){let t=document.getElementById("main").offsetTop;sections.forEach((e=>{const n=e.offsetHeight,i=e.getBoundingClientRect().top+window.pageYOffset-50;sectionId=e.getAttribute("id"),t>i&&t<=i+n?document.querySelector("a[href*="+sectionId+"]").classList.add("selected"):document.querySelector("a[href*="+sectionId+"]").classList.remove("selected")}))}function searchElement(t,e){let n=t.parentElement?.parentElement;if(!n)return null;let i=n.nextElementSibling;for(;i;){if(i.classList.contains(e))return i;i=i.nextElementSibling}return null}function elementToggle(){var t,e=document.getElementsByClassName("collapsible");for(t=0;t<e.length;t++)e[t].addEventListener("click",(function(){this.classList.toggle("active");const t=this.textContent.split(" ")[1];this.classList.contains("active")?this.textContent="hide "+t:this.textContent="show "+t,this.dataset.linkid?content=document.getElementById("hook_"+this.dataset.linkid):content=searchElement(this,"content"),content&&(content.style.maxHeight?content.style.maxHeight=null:content.style.maxHeight=content.scrollHeight+"px")}))}function toggleAriaHiddenOnClickByClass(){const t=document.querySelectorAll(".pushdown");let e=null;t.forEach((t=>{t.addEventListener("click",(function(n){n.stopPropagation();let i=t.nextElementSibling;for(;i;){if("DIV"===i.tagName&&i.classList.contains("pushdown-list")){const t="true"===i.getAttribute("aria-hidden");e&&e!==i&&e.setAttribute("aria-hidden","true"),i.setAttribute("aria-hidden",t?"false":"true"),e=t?i:null;break}i=i.nextElementSibling}}))})),document.addEventListener("click",(function(){e&&(e.setAttribute("aria-hidden","true"),e=null)})),document.addEventListener("click",(function(t){e&&e.contains(t.target)&&(e.setAttribute("aria-hidden","true"),e=null)}))}obj.addEventListener("scroll",navHighlighter),document.querySelectorAll('a[href^="#"]').forEach((t=>{t.addEventListener("click",(function(t){t.preventDefault(),document.querySelector(this.getAttribute("href")).scrollIntoView({behavior:"smooth"})}))})),elementToggle(),toggleAriaHiddenOnClickByClass();
+</script>
+
+</html>
