@@ -1,6 +1,6 @@
 
 SHEETS
-{"qInfo":{"qId":"HXTnmnv","qType":"sheet"},"qMeta":{"_resourcetype":"app.object","_objecttype":"sheet","id":"HXTnmnv","approved":false,"published":false,"owner":"rikard.larsson@kolibrivision.se","ownerId":"6964cda6dbd52d37e0d57bb2","createdDate":"2026-01-13T10:20:44.983Z","modifiedDate":"2026-01-13T10:21:00.499Z","encrypted":true,"privileges":["read","update","delete","publish","change_owner"],"title":"My new sheet","description":""},"qData":[]}
+{"qInfo":{"qId":"HXTnmnv","qType":"sheet"},"qMeta":{"_resourcetype":"app.object","_objecttype":"sheet","id":"HXTnmnv","approved":false,"published":true,"publishTime":"2026-01-13T10:22:35.245Z","owner":"rikard.larsson@kolibrivision.se","ownerId":"6964cda6dbd52d37e0d57bb2","createdDate":"2026-01-13T10:20:44.983Z","modifiedDate":"2026-01-13T10:22:34.979Z","encrypted":true,"privileges":["read","update","publish","change_owner"],"title":"My new sheet","description":""},"qData":[]}
 
 OBJECTS ON SHEETS
 {"name":"wUtQAV","type":"linechart","col":0,"row":0,"colspan":24,"rowspan":9,"bounds":{"y":0,"x":0,"width":100,"height":75}}
