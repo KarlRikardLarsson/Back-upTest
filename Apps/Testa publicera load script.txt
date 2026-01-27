@@ -29,38 +29,7 @@ Date	User		Description
 2025-06-19	Rikard Larsson, Created and modified the template Fortnox app.
 
 */
-///$tab ** Configuration **
-TRACE Initializing configuration and connection settings;
-
-// Connection to retrieve access tokens
-SET vu_rest_connection_token = ':Fortnox_GetToken_REST';
-
-// Connection used to retrieve actual data (authenticated)
-SET vu_rest_connection_data = ':Fortnox_GetData_REST';
-
-// Connection to store and retrieve QVD files
-SET vu_qvd_storage_connection = 'lib://:DataFiles';
-
-// Rest Base URL for extracting data
-LET vu_api_base_url      = 'https://api.fortnox.se/3/$1';
-
-// Company-specific setup: default start year & country code
-CompanyLookup:
-LOAD * INLINE [
-    Company,          DefaultStartYear
-    Freelance Dev,    2019,        
-    My Client AB,     2021,           
-];
-
-
-LET vForceFullReload =0; // If=1, full reload, no incremental!
-
-
-
-
-
 ///$tab Section
-
 
 ///$tab SUB UpdateTokens
 // Updates the refresh token and retrieves a new access token for the specified company
