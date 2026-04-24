@@ -11,6 +11,68 @@ Date	User		Description
 ///$tab Section
 
 ///$tab SUB UpdateTokens
+// Updates the refresh token and retrieves a new access token for the specified company
+SUB UpdateTokens(vCompany)
+
+    Trace Updating tokens for company $(vCompany);
+    LET qvd_name = '$(path_QVD_Extract($(vCompany),RefreshToken))';
+
+    // Load existing refresh tokens from QVD
+    Refreshtokens_full:
+    NoConcatenate
+    LOAD 
+        Company,
+        RefreshToken,
+        SavedTimestamp
+    FROM '$(qvd_name)'(qvd);
+	
+    // Get the refresh token for the specified company
+    LET vInputRefreshToken = lookup('RefreshToken', 'Company', '$(vCompany)', 'Refreshtokens_full');
+
+    TRACE Making token request using refresh token: $(vInputRefreshToken);
+
+    LIB CONNECT TO '$(vRefreshConnection)';
+
+    // Send token refresh request to Fortnox API
+    RestConnectorMasterTable:
+    SQL SELECT 
+        "refresh_token",
+        "access_token",
+        "__KEY_root"
+    FROM JSON (wrap on) "root" PK "__KEY_root"
+    WITH CONNECTION (
+        BODY "grant_type=refresh_token&refresh_token=$(vInputRefreshToken)"
+    );
+
+    
+    // Extract new tokens from response
+    LET vOutputRefreshToken = peek('refresh_token', 0, 'RestConnectorMasterTable');
+    LET vAccessToken        = peek('access_token', 0, 'RestConnectorMasterTable');
+    TRACE New access token: $(vAccessToken);
+    TRACE New refresh token: $(vOutputRefreshToken);
+
+    DROP TABLE RestConnectorMasterTable;
+
+    // Create updated entry for the current company
+    NoConcatenate
+    RefreshToken:
+    LOAD 
+        Company, 
+        '$(vOutputRefreshToken)' AS RefreshToken,
+        NOW() AS SavedTimestamp 
+    RESIDENT Refreshtokens_full
+	;
+
+    DROP TABLE Refreshtokens_full;
+
+    // Save updated token list back to QVD
+    Call store_qvd('RefreshToken');
+
+    TRACE Disconnecting from token refresh service;
+    DISCONNECT;
+
+
+END SUB
 
 ///$tab SUB Currencies
 SUB Extract_Currencies
