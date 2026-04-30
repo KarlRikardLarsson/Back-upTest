@@ -1,46 +1,6 @@
-{"Bookmarks": [Traceback (most recent call last):
+{"Bookmarks": [ArrayArrayTraceback (most recent call last):
   File "/tmp/code", line 15, in <module>
-    for row in FieldValues.split('\n'):
-               ^^^^^^^^^^^^^^^^^
-AttributeError: 'list' object has no attribute 'split'
-Traceback (most recent call last):
-  File "/tmp/code", line 15, in <module>
-    for row in FieldValues.split('\n'):
-               ^^^^^^^^^^^^^^^^^
-AttributeError: 'list' object has no attribute 'split'
-Traceback (most recent call last):
-  File "/tmp/code", line 15, in <module>
-    for row in FieldValues.split('\n'):
-               ^^^^^^^^^^^^^^^^^
-AttributeError: 'list' object has no attribute 'split'
-Traceback (most recent call last):
-  File "/tmp/code", line 15, in <module>
-    for row in FieldValues.split('\n'):
-               ^^^^^^^^^^^^^^^^^
-AttributeError: 'list' object has no attribute 'split'
-Traceback (most recent call last):
-  File "/tmp/code", line 15, in <module>
-    for row in FieldValues.split('\n'):
-               ^^^^^^^^^^^^^^^^^
-AttributeError: 'list' object has no attribute 'split'
-Traceback (most recent call last):
-  File "/tmp/code", line 15, in <module>
-    for row in FieldValues.split('\n'):
-               ^^^^^^^^^^^^^^^^^
-AttributeError: 'list' object has no attribute 'split'
-Traceback (most recent call last):
-  File "/tmp/code", line 15, in <module>
-    for row in FieldValues.split('\n'):
-               ^^^^^^^^^^^^^^^^^
-AttributeError: 'list' object has no attribute 'split'
-Traceback (most recent call last):
-  File "/tmp/code", line 15, in <module>
-    for row in FieldValues.split('\n'):
-               ^^^^^^^^^^^^^^^^^
-AttributeError: 'list' object has no attribute 'split'
-Traceback (most recent call last):
-  File "/tmp/code", line 15, in <module>
-    for row in FieldValues.split('\n'):
-               ^^^^^^^^^^^^^^^^^
-AttributeError: 'list' object has no attribute 'split'
-],
+    parts = row.split(',')
+            ^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'split'
+ArrayArrayArrayArrayArrayArray],
