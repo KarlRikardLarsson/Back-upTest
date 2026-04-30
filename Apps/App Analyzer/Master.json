@@ -352,7 +352,7 @@
 {"Title":"vMaxLargeAppConsumeByAppMin","Expression":"=Max(\r\n    Aggr(\n        Sum({<AppID={\"*\"},LargeAppConsumptionConcurrencyMinute={\"*\"}>}\n            Aggr(\n                Max(LargeAppConsumeAmount),\n                AppID,\n                LargeAppConsumptionConcurrencyMinute\n            )\n        )\n    ,LargeAppConsumptionConcurrencyMinute)\n) \/ 1024 \/ 1024 \/ 1024"},
 {"Title":"vMaxUsersCMByDay","Expression":"=Max(Aggr([Users CM],SessionDay))"},
 {"Title":"vTotalsEvalBracket","Expression":"=If(Match('$(vSessionsTableColumnFilter)','Totals','All'),'[')"},
-{"Title":"vEnv","Expression":"Test"}],{"Bookmarks": [{ "BookmarkName": "Skapad av autoamtion4", "Description": "Test", "Fields": [ 
+{"Title":"vEnv","Expression":"Test"}],"Bookmarks": [{ "BookmarkName": "Skapad av autoamtion4", "Description": "Test", "Fields": [ 
 {"Field":"AppID","Expression":"0f854047-1f1d-42ae-9bac-2ef12c8fc39d"},
 {"Field":"AppID","Expression":"1aabafb6-0a0f-476f-bf84-7891cd59e4cb"},
 {"Field":"AppID","Expression":"1e7c462d-025e-40bc-b4ab-65b654116f18"},
