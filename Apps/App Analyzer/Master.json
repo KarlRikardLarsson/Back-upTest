@@ -1,1 +1,19 @@
-{"Bookmarks": [{"Title":"Skapad av autoamtion4", "Description":"Test"}{"Title":"Publicerad", "Description":""}{"Title":"Inte dynamisk", "Description":""}{"Title":"Skapad av autoamtion", "Description":"Test"}{"Title":"Hitta denna", "Description":""}{"Title":"Med Dynamikt filter", "Description":""}{"Title":"Skapad av autoamtion3", "Description":"Test"}{"Title":"Bara dynamik", "Description":""}{"Title":"Skapad av autoamtion2", "Description":"Test"}],
+{"Bookmarks": [{"Title":"Skapad av autoamtion4", "Description":"Test", 
+ "Fields":[ 
+}{"Title":"Publicerad", "Description":"", 
+ "Fields":[ 
+}{"Title":"Inte dynamisk", "Description":"", 
+ "Fields":[ 
+}{"Title":"Skapad av autoamtion", "Description":"Test", 
+ "Fields":[ 
+}{"Title":"Hitta denna", "Description":"", 
+ "Fields":[ 
+}{"Title":"Med Dynamikt filter", "Description":"", 
+ "Fields":[ 
+}{"Title":"Skapad av autoamtion3", "Description":"Test", 
+ "Fields":[ 
+}{"Title":"Bara dynamik", "Description":"", 
+ "Fields":[ 
+}{"Title":"Skapad av autoamtion2", "Description":"Test", 
+ "Fields":[ 
+}],
