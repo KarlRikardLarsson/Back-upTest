@@ -1,33 +1,42 @@
-{"Bookmarks": [{ "BookmarkName": "Skapad av autoamtion4", "Description": "Test", "Fields": [ {"Field":"AppID","Expression":"0f854047-1f1d-42ae-9bac-2ef12c8fc39d"},
+{"Bookmarks": [{ "BookmarkName": "Skapad av autoamtion4", "Description": "Test", "Fields": [ 
+{"Field":"AppID","Expression":"0f854047-1f1d-42ae-9bac-2ef12c8fc39d"},
 {"Field":"AppID","Expression":"1aabafb6-0a0f-476f-bf84-7891cd59e4cb"},
 {"Field":"AppID","Expression":"1e7c462d-025e-40bc-b4ab-65b654116f18"},
 {"Field":"AppID","Expression":"1f07e8b4-901a-4b49-ae94-62f225595301"},
 {"Field":"AppID","Expression":"2b839d20-d3f0-46f3-857a-ae2012b179ee"},
 {"Field":"SessionYear","Expression":" =[SessionYear]=year(today())"},
-]},{ "BookmarkName": "Publicerad", "Description": "", "Fields": [ {"Field":"AppID","Expression":"0f854047-1f1d-42ae-9bac-2ef12c8fc39d"},
+]},{ "BookmarkName": "Publicerad", "Description": "", "Fields": [ 
+{"Field":"AppID","Expression":"0f854047-1f1d-42ae-9bac-2ef12c8fc39d"},
 {"Field":"AppID","Expression":"1aabafb6-0a0f-476f-bf84-7891cd59e4cb"},
 {"Field":"AppID","Expression":"1e7c462d-025e-40bc-b4ab-65b654116f18"},
 {"Field":"AppID","Expression":"1f07e8b4-901a-4b49-ae94-62f225595301"},
 {"Field":"AppID","Expression":"2b839d20-d3f0-46f3-857a-ae2012b179ee"},
 {"Field":"SessionYear","Expression":" =[SessionYear]=year(today())"},
-]},{ "BookmarkName": "Inte dynamisk", "Description": "", "Fields": [ {"Field":"AppID","Expression":"1aabafb6-0a0f-476f-bf84-7891cd59e4cb"},
+]},{ "BookmarkName": "Inte dynamisk", "Description": "", "Fields": [ 
+{"Field":"AppID","Expression":"1aabafb6-0a0f-476f-bf84-7891cd59e4cb"},
 {"Field":"SessionUserSubject","Expression":"auth0|9c175a956fe3b6462206786e43d8deb1af3f20583f3aa4419891abc395a39ba4"},
 {"Field":"SessionStartTimeDate","Expression":"2026-04-03"},
-]},{ "BookmarkName": "Skapad av autoamtion", "Description": "Test", "Fields": [ {"Field":"AppID","Expression":"0f854047-1f1d-42ae-9bac-2ef12c8fc39d"},
+]},{ "BookmarkName": "Skapad av autoamtion", "Description": "Test", "Fields": [ 
+{"Field":"AppID","Expression":"0f854047-1f1d-42ae-9bac-2ef12c8fc39d"},
 {"Field":"AppID","Expression":"1aabafb6-0a0f-476f-bf84-7891cd59e4cb"},
 {"Field":"AppID","Expression":"1e7c462d-025e-40bc-b4ab-65b654116f18"},
 {"Field":"AppID","Expression":"1f07e8b4-901a-4b49-ae94-62f225595301"},
 {"Field":"AppID","Expression":"2b839d20-d3f0-46f3-857a-ae2012b179ee"},
 {"Field":"SessionYear","Expression":" =[SessionYear]=year(today())"},
-]},{ "BookmarkName": "Hitta denna", "Description": "", "Fields": [ ]},{ "BookmarkName": "Med Dynamikt filter", "Description": "", "Fields": [ {"Field":"AppID","Expression":"0f854047-1f1d-42ae-9bac-2ef12c8fc39d"},
+]},{ "BookmarkName": "Hitta denna", "Description": "", "Fields": [ 
+]},{ "BookmarkName": "Med Dynamikt filter", "Description": "", "Fields": [ 
+{"Field":"AppID","Expression":"0f854047-1f1d-42ae-9bac-2ef12c8fc39d"},
 {"Field":"AppID","Expression":"1aabafb6-0a0f-476f-bf84-7891cd59e4cb"},
 {"Field":"AppID","Expression":"1e7c462d-025e-40bc-b4ab-65b654116f18"},
 {"Field":"AppID","Expression":"1f07e8b4-901a-4b49-ae94-62f225595301"},
 {"Field":"AppID","Expression":"2b839d20-d3f0-46f3-857a-ae2012b179ee"},
 {"Field":"SessionYear","Expression":" =[SessionYear]=year(today())"},
-]},{ "BookmarkName": "Skapad av autoamtion3", "Description": "Test", "Fields": [ ]},{ "BookmarkName": "Bara dynamik", "Description": "", "Fields": [ {"Field":"SessionStartTimeDate","Expression":" =[SessionStartTimeDate]=date(today()-6)"},
+]},{ "BookmarkName": "Skapad av autoamtion3", "Description": "Test", "Fields": [ 
+]},{ "BookmarkName": "Bara dynamik", "Description": "", "Fields": [ 
+{"Field":"SessionStartTimeDate","Expression":" =[SessionStartTimeDate]=date(today()-6)"},
 {"Field":"SessionYear","Expression":" =[SessionYear]=year(today())"},
-]},{ "BookmarkName": "Skapad av autoamtion2", "Description": "Test", "Fields": [ {"Field":"AppID","Expression":"0f854047-1f1d-42ae-9bac-2ef12c8fc39d"},
+]},{ "BookmarkName": "Skapad av autoamtion2", "Description": "Test", "Fields": [ 
+{"Field":"AppID","Expression":"0f854047-1f1d-42ae-9bac-2ef12c8fc39d"},
 {"Field":"AppID","Expression":"1aabafb6-0a0f-476f-bf84-7891cd59e4cb"},
 {"Field":"AppID","Expression":"1e7c462d-025e-40bc-b4ab-65b654116f18"},
 {"Field":"AppID","Expression":"1f07e8b4-901a-4b49-ae94-62f225595301"},
