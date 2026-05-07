@@ -1,26 +1,3 @@
-///$tab Main
-SET ThousandSep=' ';
-SET DecimalSep=',';
-SET MoneyThousandSep=' ';
-SET MoneyDecimalSep=',';
-SET MoneyFormat='# ##0,00 €;-# ##0,00 €';
-SET TimeFormat='hh:mm:ss';
-SET DateFormat='YYYY-MM-DD';
-SET TimestampFormat='YYYY-MM-DD hh:mm:ss[.fff]';
-SET FirstWeekDay=0;
-SET BrokenWeeks=0;
-SET ReferenceDay=4;
-SET FirstMonthOfYear=1;
-SET CollationLocale='sv-FI';
-SET CreateSearchIndexOnReload=1;
-SET MonthNames='jan.;feb.;mars;apr.;maj;juni;juli;aug.;sep.;okt.;nov.;dec.';
-SET LongMonthNames='januari;februari;mars;april;maj;juni;juli;augusti;september;oktober;november;december';
-SET DayNames='mån;tis;ons;tors;fre;lör;sön';
-SET LongDayNames='måndag;tisdag;onsdag;torsdag;fredag;lördag;söndag';
-SET NumericalAbbreviation='3:k;6:M;9:G;12:T;15:P;18:E;21:Z;24:Y;-3:m;-6:μ;-9:n;-12:p;-15:f;-18:a;-21:z;-24:y';
-
-
-
 ///$tab CHANGE LOG
 /* 
 	  ___   _  _  _                    _ 
@@ -40,176 +17,813 @@ SET NumericalAbbreviation='3:k;6:M;9:G;12:T;15:P;18:E;21:Z;24:Y;-3:m;-6:μ;-9:n;
     CHANGE LOG
     ==============================================================================
     Date          User              Company          Description
-    ==============================================================================
-    2026-03-10    Rikard Larsson    Kolibri Vision   Created this app and full logic
+    =============================================================================
+    2026-03-6	Rikard Larsson	Kolirbi,	Changed storage path and added vEnv
+    2026-03-5	Rikard Larsson	Kolirbi,	Translated to English, updated keys to Company&'|'&Key format, added Invoice transform SUB.
+    2026-03-4	Rikard Larsson	Kolirbi,	Transform Articles.
+    2026-03-3	Rikard Larsson	Kolirbi,	Created "Report Structure" excel and account transform for that.
+    2026-03-2	Rikard Larsson	Kolirbi,	Created first draft: Transform
+
     ==============================================================================
 */
-///$tab **Config**
+///$tab ** Config **
 TRACE Initializing configuration and connection settings;
 
+
+// name of space where QVDS should be stored and extracted from
 SET vu_base_store_space_name='Data';
+
+// Sätt denna: 'True'  = ladda endast aktiva dimensioner
+//              annat  = ladda både aktiva och inaktiva dimensioner
+SET vActiveOnly = 'True';
+
+
+///$tab Variables
+SUB Variables
 
 // Connection to store and retrieve QVD files
 SET vu_qvd_storage_connection = '$(vu_base_store_space_name):DataFiles';
 
-// Output Store
-SET vOutputQVDName = 'lib://$(vu_qvd_storage_connection)/Riksbanken/Valutor_Riksbanken.qvd';
-SET vInputQVDName    = 'lib://$(vu_qvd_storage_connection)/Fortnox/Extract/*/Currencies.qvd';
+LET vEnv = If(GetSysAttr('spaceType') = 'managed', 'Prod', 'Dev'); // creates Dev and Prod env based on SpaceType
 
-// Connection used to retrieve actual data (Currency exchange + date)
-SET vu_rest_riksbanken = '$(vu_base_store_space_name):Riksbanken_ExchangeRates';
+SET vQVD_Extract    = 'lib://$(vu_qvd_storage_connection)/Fortnox/Extract/*/$1.qvd';
+SET vQVD_Transform  = 'lib://$(vu_qvd_storage_connection)/Fortnox/Transform/$(vEnv)/$1.qvd';
+SET vQVD_Currencies = 'lib://$(vu_qvd_storage_connection)/Riksbanken/$1.qvd';
 
-// Rest Base URL for extracting data
-LET vu_api_base_url      = 'https://api.riksbank.se/swea/v1/Observations/$1/$2';
+// In personal space - RECOMENDED TO CHANGE TO CLOUD STORAGE -
+SET vXLSXfile		= 'lib://DataFiles/$1.xlsx';
 
-///$tab Get currencies
-// Load currency data from QVD
-Currencies:
-LOAD
-    Code,
-    StartDate
-FROM '$(vInputQVDName)'
-(qvd);
+SET vOutputQVDName = '$(vQVD_Transform)'; // Default store location
+SET vInputQVDName  = '$(vQVD_Extract)';   // Default read location
 
-// Get the minimum available date from the currency QVD
-MinDate:
-LOAD 
-    Min(StartDate) AS MinDate
-RESIDENT Currencies;
 
-LET vWeekendSafe           = if(match(weekday(Peek('MinDate', 0, 'MinDate')),'lör','sön'),3,0);
+Let vActiveList = if(lower('$(vActiveOnly)')='true',
+   '''True''',
+    '''True'',''False'''
+);
 
-// Substract 3 days from start date. In case first date is on a sunday the peek does not work and cause the first date not to have a value
-LET vStartDate           = Date(Peek('MinDate', 0, 'MinDate')-vWeekendSafe, 'YYYY-MM-DD');
-LET vStartDateNumerical  = Num(Peek('MinDate', 0, 'MinDate')-vWeekendSafe);
+LET vActiveMessage = if(Lower('$(vActiveOnly)')='true',
+  'Loading ONLY active dimensions.',
+  'Loading ALL dimensions (including inactive).'
+);
 
-DROP TABLE MinDate;
+TRACE $(vActiveMessage);
+SET vActiveMessage=;
 
-// Create a distinct list of currency codes
-Currencies_of_interest:
-LOAD DISTINCT 
-    Code AS CurrencyCodes
-RESIDENT Currencies;
+END SUB
 
-DROP TABLE Currencies;
-
-// ----------------- Fetch exchange rate series info ----------------- //
-// Connect to Riksbank API (Series metadata)
-LIB CONNECT TO '$(vu_rest_riksbanken)';
-
-RestConnectorMasterTable:
-SQL SELECT 
-    "seriesId",
-    "source",
-    "shortDescription",
-    "midDescription",
-    "longDescription",
-    "groupId",
-    "observationMaxDate",
-    "observationMinDate",
-    "seriesClosed"
-FROM JSON (wrap on) "root";
-
-ExchangeRateSeries:
-LOAD
-    seriesId,
-    source,
-    shortDescription,
-    midDescription,
-    longDescription,
-    groupId,
-    observationMaxDate,
-    observationMinDate,
-    seriesClosed
-RESIDENT RestConnectorMasterTable;
-
-DROP TABLE RestConnectorMasterTable;
-
-// Initialize target table
-Currency:
-LOAD * INLINE [
-%DateKey
-]
-
-WHERE 1=0; // Empty structure, used for appending later
-
-FOR EACH vCurrency IN FieldValueList('CurrencyCodes')
-
-    TRACE Fetching exchange rate for currency: $(vCurrency);
-
-    GetCurrencySeries:
+///$tab Artiklar
+SUB Load_DIM_Artiklar
+    // ----------------------------------------------------------------
+    // DIM: Artiklar
+    // ----------------------------------------------------------------
+    DIM_Artiklar:
     LOAD
-        seriesId
-    RESIDENT ExchangeRateSeries
-    WHERE shortDescription = '$(vCurrency)';
+        Company & '|' & ArticleNumber               AS %Key_Artikel,
+        ArticleNumber                               AS ArtikelNummer,
+        ArticleNumber & ' ' & Description           AS Artikel,
+        Depth                                       AS Djup,
+        EAN,
+        ExportAccount                               AS ExportKonto,
+        Manufacturer                                AS Tillverkare,
+        Note                                        AS Anteckning,
+        PurchaseAccount                             AS InköpsKonto,
+        PurchasePrice                               AS InköpsPris,
+        SalesAccount                                AS FörsäljningsKonto,
+        SupplierName                                AS LeverantörNamn
+    FROM '$(vInputQVDName(Articles))' (qvd);
+    
+    // ----------------------------------------------------------------
+    // Mappning: Artikel → Inköpspris (baspris från Artiklar)
+    // ----------------------------------------------------------------
+    Map_Artikel_InköpsPris:
+    MAPPING LOAD
+        %Key_Artikel,
+        InköpsPris
+    RESIDENT DIM_Artiklar;
+    
+    // ----------------------------------------------------------------
+    // Långsamt föränderlig dimension: Inköpspris från Lager -> Inkluderar datum
+    // ----------------------------------------------------------------
+    Tmp_Artiklar_Pris:
+    LOAD
+        Company,
+        ArticleNumber,
+        PurchasePrice,
+        lastmodify
+    FROM '$(vInputQVDName(Inventory))' (qvd);
+    
+    Map_ArtikelDatum_InköpsPris:
+    Mapping LOAD
+        Company & '|' & ArticleNumber & '|' & Num(Floor(lastmodify)) AS %Key_ArtikelDatum,
+        PurchasePrice
+    RESIDENT Tmp_Artiklar_Pris;
+    DROP TABLE Tmp_Artiklar_Pris;
+    DROP FIELD InköpsPris FROM DIM_Artiklar;
+    
+    
+    CALL Store_QVD('DIM_Artiklar')
+    
+END SUB
+///$tab Faktura
+SUB Load_FCT_Faktura
 
-    // Check if seriesId was found
-    IF NoOfRows('GetCurrencySeries') > 0 THEN
+// =======================
+// RAW LOAD
+// =======================
+TMP_Faktura_Raw:
+LOAD
+    Company,
+    DocumentNumber,
+    CustomerNumber,
+    InvoiceDate,
+    DueDate,
+    Credit,
+    FinalPayDate,
+    InvoiceType,
+    AccountNumber,
+    ArticleNumber,
+    CostCenter,
+    Project,
+    DeliveredQuantity,
+    Discount,
+    VAT,
+    Description,
+    Price,
+    Freight,
+    RowId
+FROM '$(vInputQVDName(Invoices))' (qvd);
 
-        LET vSeriesId = Peek('seriesId', 0, 'GetCurrencySeries');
-        DROP TABLE GetCurrencySeries;
+// =======================
+// TRANSFORMERING (RESIDENT)
+// =======================
+FCT_Faktura:
+NOCONCATENATE
+LOAD
+    // ---------- Nycklar ----------
+    Company & '|' & Text(CustomerNumber)                        AS %Key_Kund,
+    Company & '|' & Text(ArticleNumber)                         AS %Key_Artikel,
+    Company & '|' & Num(AccountNumber, '0000')                  AS %Key_Konto,
+    Company & '|' & Trim(CostCenter)                            AS %Key_KostnadsStälle,
+    Company & '|' & Project                                     AS %Key_Projekt,
+    Company & '|' & Text(ArticleNumber) & '|' & Text(RowId)     AS FakturaRad,
+    // ---------- Dimensioner ----------
+    DocumentNumber                                              AS FakturaNr,
+    Date(Floor(InvoiceDate))                                    AS FakturaDatum,
+    Date(Floor(DueDate))                                        AS FörfalloDatum,
+    If(Credit = 'True', 1, 0)                                   AS Kredit,
+    InvoiceType                                                 AS FakturaTyp,
+    AccountNumber                                               AS KontoNummer,
+    Freight                                                     AS Frakt,
+    FinalPayDate                                                AS SlutBetalDatum,
+    Company														AS Företag,
+    Description													AS Beskrivning,
+    
+    // ---------- Mått ----------
+    DeliveredQuantity                                           AS LeveransAntal,
+    Price                                                       AS Pris,
+    Discount                                                    AS Rabatt,
+    VAT                                                         AS Moms,
+    DeliveredQuantity * ApplyMap('Map_ArtikelDatum_InköpsPris', Company & '|' & ArticleNumber & '|' & Num(Floor(InvoiceDate)), ApplyMap('Map_Artikel_InköpsPris', Company & '|' & ArticleNumber, 0)) AS InköpsPris,
+    (DeliveredQuantity * Price)                                 AS Försäljningsbelopp,
+    
+    // ---------- Info/Övrigt ----------
+    'Invoice Fortnox'                                           AS Källa
+RESIDENT TMP_Faktura_Raw;
 
-        TRACE Found seriesId: $(vSeriesId);
+DROP TABLE TMP_Faktura_Raw;
 
-        LET vURL = '$(vu_api_base_url($(vSeriesId),$(vStartDate)))';
+Left join(FCT_Faktura)
+LOAD
+    FakturaRad,
+    (Försäljningsbelopp - InköpsPris)                           AS Täckningsbidrag
+RESIDENT FCT_Faktura;
 
-        RestConnectorMasterTable:
-        SQL SELECT 
-            "date",
-            "value"
-        FROM JSON (wrap on) "root"
-        WITH CONNECTION (
-            URL "$(vURL)"
-        );
+DROP MAPPING TABLES Map_ArtikelDatum_InköpsPris, Map_Artikel_InköpsPris;
 
-        LET vEndDate = Num(Today());
-        
-        Currencies_tmp:
-        LOAD 
-            '$(vCurrency)' AS Currency,
-            Date($(vStartDateNumerical) + IterNo() - 1, 'YYYY-MM-DD') AS %DateKey
-        AUTOGENERATE 1
-        WHILE $(vStartDateNumerical) + IterNo() - 1 <= $(vEndDate);
-        
+CALL Store_QVD('FCT_Faktura')
 
-        LEFT JOIN (Currencies_tmp)
-        LOAD
-            Date(Floor(date)) AS %DateKey,
-            value
-        RESIDENT RestConnectorMasterTable;
+END SUB
+///$tab Huvudbok
+SUB Load_FCT_Huvudbok
 
-        DROP TABLE RestConnectorMasterTable;
-		
-        NoConcatenate
-        Currencies_tmp2:
-        LOAD
-            Currency,
-            %DateKey,
-			Coalesce(value, Peek(value, -1), Peek(CurrencyFactor, -1)) AS CurrencyFactor            
-        RESIDENT Currencies_tmp
-        ORDER BY %DateKey;
-        
-        DROP TABLE Currencies_tmp;
+// =======================
+// RAW LOAD
+// =======================
+TMP_Verifikat_Raw:
+LOAD
+    Company,
+    AccountNo,
+    VoucherSeries,
+    VoucherNumber,
+    CostCenter,
+    Project,
+    Description,
+    Credit,
+    @url,
+    Debit,
+    TransactionInformation,
+    Year,
+    Description_u0,
+    TransactionDate,
+    Removed
+FROM '$(vInputQVDName(Vouchers))' (qvd);
 
-		CONCATENATE(Currency)
-        LOAD
-            %DateKey,
-            Currency,
-            CurrencyFactor
-        RESIDENT Currencies_tmp2;
+// =======================
+// TRANSFORMERING (RESIDENT)
+// =======================
+TRANS_Verifikat_TMP:
+NOCONCATENATE
+LOAD
+    // ---------- Nycklar ----------
+    Company & '|' & Num(AccountNo, '0000')    AS %Key_Konto,
+    Company & '|' & Project                   AS %Key_Projekt,
+    Company & '|' & Trim(CostCenter)          AS %Key_KostnadsStälle,
+    Company & '|' & Year                      AS %Key_RäkenskapsÅr,
 
-        DROP TABLE Currencies_tmp2;
-        
-    ELSE
-        TRACE Skipping: No seriesId found for $(vCurrency);
-        DROP TABLE GetCurrencySeries;
-    ENDIF
+    // ---------- Dimensioner ----------
+    Company									  AS Företag,
+    Text(VoucherSeries) & Text(VoucherNumber) AS VerifikatSerieNummer,
+    VoucherNumber                             AS VerifikatNummer,
+    Text(VoucherSeries)                       AS VerifikatSerie,
+    Description                               AS VerifikatBeskrivning,
+    TransactionInformation					  AS TransaktionsInformation,
+    Description_u0,
+    
+    // Datum
+    Date(Floor(TransactionDate))              AS BokföringsDatum,
+    Floor(MonthStart(Floor(TransactionDate))) AS PeriodNr,
+    Date(MonthStart(Floor(TransactionDate)))  AS Period,
 
-NEXT
+    // Belopp
+    RangeSum(Credit, -Debit)                  AS Belopp_SEK,
+
+    // Status
+    If(Removed = 'True', 1, 0)               AS ÄrBortagen,
+
+    // Kontoklass (1–8)
+    Left(Trim(AccountNo), 1)                  AS KontoKlass
+
+RESIDENT TMP_Verifikat_Raw;
+
+DROP TABLE TMP_Verifikat_Raw;
+
+// =======================
+// BALANSRÖRELSER (klass 1–2), per Konto+Projekt+KostnadsStälle+RäkenskapsÅr
+// =======================
+RörelserPerPeriod:
+LOAD
+    %Key_Konto,
+    %Key_Projekt,
+    %Key_KostnadsStälle,
+    %Key_RäkenskapsÅr,
+    Företag,
+    PeriodNr,
+    Sum(Belopp_SEK) AS Rörelse_SEK
+RESIDENT TRANS_Verifikat_TMP
+WHERE ÄrBortagen = 0 AND Match(KontoKlass, '1', '2')
+AND PeriodNr <= Floor(MonthStart(Today(0)))
+GROUP BY %Key_Konto, %Key_Projekt, %Key_KostnadsStälle, %Key_RäkenskapsÅr, Företag, PeriodNr;
+
+// ---- Min..Idag per nyckelkombination ----
+MinMax_TillIdag:
+LOAD
+    %Key_Konto,
+    %Key_Projekt,
+    %Key_KostnadsStälle,
+    %Key_RäkenskapsÅr,
+    Företag,
+    Min(PeriodNr)               AS FrånP,
+    Floor(MonthStart(Today(0))) AS TillP
+RESIDENT RörelserPerPeriod
+GROUP BY %Key_Konto, %Key_Projekt, %Key_KostnadsStälle, %Key_RäkenskapsÅr, Företag;
+
+// ---- Befintliga sammansatta nycklar (för NOT EXISTS) ----
+BefintligaBalPer:
+LOAD DISTINCT
+    AutoNumberHash128(%Key_Konto, %Key_Projekt, %Key_KostnadsStälle, %Key_RäkenskapsÅr, PeriodNr) AS %Key_BalPer
+RESIDENT RörelserPerPeriod;
+
+// ---- Fyll saknade månader med 0-rader ----
+CONCATENATE (RörelserPerPeriod)
+LOAD
+    %Key_Konto,
+    %Key_Projekt,
+    %Key_KostnadsStälle,
+    %Key_RäkenskapsÅr,
+    Företag,
+    GenP      AS PeriodNr,
+    0         AS Rörelse_SEK
+WHERE NOT Exists(%Key_BalPer,
+         AutoNumberHash128(%Key_Konto, %Key_Projekt, %Key_KostnadsStälle, %Key_RäkenskapsÅr, GenP));
+LOAD
+    %Key_Konto,
+    %Key_Projekt,
+    %Key_KostnadsStälle,
+    %Key_RäkenskapsÅr,
+    Företag,
+    AddMonths(FrånP, IterNo()-1) AS GenP
+RESIDENT MinMax_TillIdag
+WHILE AddMonths(FrånP, IterNo()-1) <= TillP;
+
+DROP TABLE BefintligaBalPer, MinMax_TillIdag;
+
+// ---- Normalisera ----
+RörelserPerPeriod_Full:
+NOCONCATENATE
+LOAD
+    %Key_Konto,
+    %Key_Projekt,
+    %Key_KostnadsStälle,
+    %Key_RäkenskapsÅr,
+    Företag,
+    PeriodNr,
+    Sum(Rörelse_SEK) AS Rörelse_SEK
+RESIDENT RörelserPerPeriod
+GROUP BY %Key_Konto, %Key_Projekt, %Key_KostnadsStälle, %Key_RäkenskapsÅr, Företag, PeriodNr
+ORDER BY %Key_Konto, %Key_Projekt, %Key_KostnadsStälle, %Key_RäkenskapsÅr, Företag, PeriodNr;
+
+DROP TABLE RörelserPerPeriod;
+
+// =======================
+// INGÅENDE / UTGÅENDE BALANS
+// =======================
+FCT_Huvudbok:
+NOCONCATENATE
+LOAD *,
+    // UB = IB + Rörelse
+    RangeSum(IngåendeBalans_SEK, Rörelse_SEK) AS UtgåendeBalans_SEK;
+LOAD
+    %Key_Konto,
+    %Key_Projekt,
+    %Key_KostnadsStälle,
+    %Key_RäkenskapsÅr,
+    Företag,
+    'BR|' & MonthStart(PeriodNr)  AS Period,
+    PeriodNr,
+
+    // IB = föregående periods UB för samma nyckelkombination
+    If(
+        Previous(%Key_Konto)           = %Key_Konto           AND
+        Previous(%Key_Projekt)         = %Key_Projekt         AND
+        Previous(%Key_KostnadsStälle)  = %Key_KostnadsStälle  AND
+        Previous(%Key_RäkenskapsÅr)    = %Key_RäkenskapsÅr    AND
+        Previous(Företag)              = Företag,
+        Peek('UtgåendeBalans_SEK'),
+        0
+    )                              AS IngåendeBalans_SEK,
+
+    Rörelse_SEK,
+    'BALANS'                       AS RapportTyp,
+    'Ledger Fortnox'               AS Källa
+RESIDENT RörelserPerPeriod_Full
+// Sortering: alla nycklar först, sedan PeriodNr
+ORDER BY
+    %Key_Konto,
+    %Key_Projekt,
+    %Key_KostnadsStälle,
+    %Key_RäkenskapsÅr,
+    Företag,
+    PeriodNr;
+
+DROP TABLE RörelserPerPeriod_Full;
+
+// =======================
+// RESULTATRÄKNING (klass 3–8)
+// =======================
+Concatenate(FCT_Huvudbok)
+LOAD
+    *,
+    'RESULTAT'       AS RapportTyp,
+    'Ledger Fortnox' AS Källa
+RESIDENT TRANS_Verifikat_TMP
+WHERE ÄrBortagen = 0 AND Match(KontoKlass, '3', '4', '5', '6', '7', '8')
+AND PeriodNr <= Floor(MonthStart(Today(0)));
+;
+
+DROP TABLE TRANS_Verifikat_TMP;
+DROP FIELD PeriodNr;
+
+CALL Store_QVD('FCT_Huvudbok')
+
+END SUB
+///$tab Konto
+SUB Load_DIM_Konto
+
+SET vIndentNbspCount = 5; // antal icke-brytande mellanslag för indragning
+
+SET vNormalFärg  = #FFFFFF;
+SET vMellanFärg  = #F2F2F2;
+SET vFetFärg     = #C9B8CC;
+SET vKursivFärg  = #EDE6EF;
+
+DIM_Konto:
+LOAD
+    // Nyckel (kort & tydlig). Behåll Company i nyckeln för att undvika krockar mellan bolag.
+    Company & '|' & Num(Number, '0000')              AS %Key_Konto,
+
+    // Naturliga attribut
+    Num(Number, '0000')                              AS KontoNr,
+    Description                                      AS KontoNamn,
+    Num(Number, '0000') & ' - ' & Description        AS Konto,
+
+    // Status (normaliserat bool till 0/1)
+    If(Active = 'True', 1, 0)                        AS Konto_Aktiv,
+
+    // SRU-kod för konto
+    SRU                                              AS SRU_Konto
+
+FROM '$(vInputQVDName(Accounts))' (qvd)
+WHERE Match(Active, $(vActiveList));
 
 
-// Final cleanup
-DROP TABLES ExchangeRateSeries, Currencies_of_interest;
+// Förklaring av "KontoIntervall"-format:
+// Du kan definiera kontointervall med ett bindestreck, t.ex. 5000-5999.
+// För specifika konton, separera med semikolon, t.ex. 7830;7831.
+// Blanda inte intervall och enskilda konton i samma cell.
 
-// Store the final currency data
-STORE Currency INTO [$(vOutputQVDName)] (qvd);
+RapportStruktur:
+LOAD
+    RowNo()              AS SortOrder,
+    'RR' & RadID         AS RadID,
+    'RR' & OverordnadRadID AS ÖverordnadRadID,
+    RadBeskrivning       AS RadBeskrivning,
+    KontoIntervall       AS KontoIntervall,
+    Stil                 AS Stil,
+    Procentrad           AS Procentrad
+FROM '$(vXLSXfile(ReportStructure))' 
+(ooxml, embedded labels, table is Resultaträkning);
+
+
+Concatenate(RapportStruktur)
+LOAD
+    RowNo()              AS SortOrder,
+    'BR' & RadID         AS RadID,
+    'BR' & OverordnadRadID AS ÖverordnadRadID,
+    RadBeskrivning       AS RadBeskrivning,
+    KontoIntervall       AS KontoIntervall,
+    Stil                 AS Stil,
+    Procentrad           AS Procentrad
+FROM '$(vXLSXfile(ReportStructure))' 
+(ooxml, embedded labels, table is Balansräkning);
+
+KontoIntervallPoster:
+LOAD RadID AS RadNyckel,
+    Num(SubField(KontoPost, '-', 1)) AS FrånKonto,
+    Num(
+        If(Index(KontoPost, '-') > 0,
+            SubField(KontoPost, '-', 2),
+            SubField(KontoPost, '-', 1)
+        )
+    ) AS TillKonto;
+LOAD
+    RadID,
+    SubField(KontoIntervall, ';') AS KontoPost
+RESIDENT RapportStruktur
+WHERE Len(Trim(KontoIntervall)) > 0;
+
+// --------------------------------------------------
+// Bygg hierarkikarta: kopplar varje rad till sina föräldrarader
+// --------------------------------------------------
+HierarkiKarta:
+HierarchyBelongsTo (RadID, ÖverordnadRadID, RadBeskrivning, FörälderRubrikID, FörälderRubrik, NivåDjup)
+LOAD
+    RadID,
+    ÖverordnadRadID,
+    RadBeskrivning
+RESIDENT RapportStruktur;
+
+
+// --------------------------------------------------
+// Koppla kontointervall till varje rad i hela hierarkin
+// --------------------------------------------------
+LEFT JOIN (HierarkiKarta)
+LOAD
+    RadNyckel AS RadID,
+    FrånKonto,
+    TillKonto
+RESIDENT KontoIntervallPoster;
+
+// --------------------------------------------------
+// Bygg tabell med varje rad och dess kontointervall
+// --------------------------------------------------
+RapportRadKontoKarta_Tmp:
+LOAD
+    FörälderRubrikID AS RadID,
+    FrånKonto,
+    TillKonto,
+    NivåDjup
+RESIDENT HierarkiKarta
+WHERE NOT IsNull(FrånKonto) AND NOT IsNull(TillKonto);
+
+// --------------------------------------------------
+// Lägg till RadBeskrivning till varje rad för kontext
+// --------------------------------------------------
+JOIN (RapportRadKontoKarta_Tmp)
+LOAD
+    RadID,
+    RadBeskrivning
+RESIDENT RapportStruktur;
+
+// --------------------------------------------------
+// Matcha transaktioner mot rapportrader baserat på kontonummer
+// --------------------------------------------------
+LEFT JOIN (RapportRadKontoKarta_Tmp)
+IntervalMatch (KontoNr)
+LOAD
+    FrånKonto,
+    TillKonto
+RESIDENT RapportRadKontoKarta_Tmp;
+
+// --------------------------------------------------
+// Lägg till sorteringsordning och visuell stil från rapportradsdefinition
+// --------------------------------------------------
+JOIN (RapportRadKontoKarta_Tmp)
+LOAD
+    RadBeskrivning,
+    SortOrder,
+    Stil,
+    Procentrad
+RESIDENT RapportStruktur;
+
+// --------------------------------------------------
+// Rensa temporära tabeller
+// --------------------------------------------------
+DROP TABLE KontoIntervallPoster, RapportStruktur, HierarkiKarta;
+
+RapportRadKontoKarta:
+LOAD DISTINCT
+    KontoNr,
+    RadID,
+    If(Stil = 'Normal', Text(Repeat(Chr(160), $(vIndentNbspCount)) & RadBeskrivning), Coalesce(RadBeskrivning, ' ')) AS RadBeskrivning,
+    SortOrder,
+    NivåDjup,
+    Procentrad,
+
+    If(IsNull(Stil) OR Len(Trim(Stil)) = 0,
+        '$(vMellanFärg)',          // Tomma/avdelare rader → ljusgrå, förhindrar kollaps
+      If(Stil = 'Normal',
+        '$(vNormalFärg)',          // Vit
+        If(Stil = 'Fet',
+          '$(vFetFärg)',           // Malva #C9B8CC
+          If(Stil = 'Kursiv',
+            '$(vKursivFärg)',      // Lavendel #EDE6EF
+            '$(vMellanFärg)'      // Fallback
+          )
+        )
+      )
+    ) AS Färg,
+
+    If(Stil = 'Normal', null(),
+      If(Stil = 'Fet', ' <B>',
+        If(Stil = 'Kursiv', '<I>',
+    Null()))) AS Stil
+
+RESIDENT RapportRadKontoKarta_Tmp
+WHERE NOT IsNull(SortOrder);  
+
+DROP TABLE RapportRadKontoKarta_Tmp;
+
+SET vIndentNbspCount =;
+
+LEFT JOIN (RapportRadKontoKarta)
+LOAD
+    SortOrder,
+    Dual(RadBeskrivning, SortOrder) AS RadBeskrivningUnik
+RESIDENT RapportRadKontoKarta;
+
+DROP FIELDS SortOrder, RadBeskrivning;
+RENAME FIELD RadBeskrivningUnik TO RadBeskrivning;
+
+
+
+CALL Store_QVD('RapportRadKontoKarta')
+CALL Store_QVD('DIM_Konto')
+
+END SUB
+///$tab Projekt
+SUB Load_DIM_Projekt
+
+tmpProjekt:
+LOAD *
+FROM '$(vInputQVDName(Projects))' (qvd);
+
+// Mappningstabell för projektstatus
+MapProjektStatus:
+MAPPING LOAD * INLINE [
+Key, Value
+NOTSTARTED, Ej påbörjad
+ONGOING, Pågående
+COMPLETED, Avslutad
+];
+
+DIM_Projekt:
+LOAD
+    Company & '|' & Trim(ProjectNumber)              AS %Key_Projekt,
+    Trim(ProjectNumber)                              AS ProjektNr,
+    Description                                      AS ProjektNamn,
+    Trim(ProjectNumber) & ' - ' & Description        AS Projekt,
+    
+    // Svensk etikett via ApplyMap mot mappningstabell
+    ApplyMap('MapProjektStatus', Upper(Trim(Status))) AS ProjektStatus,
+    
+    // Datum (numeriska + visningsfält)
+    Floor(StartDate)                                  AS ProjektStartNr,
+    Date(Floor(StartDate))                            AS ProjektStart,
+    Floor(EndDate)                                    AS ProjektSlutNr,
+    Date(Floor(EndDate))                              AS ProjektSlut
+RESIDENT tmpProjekt
+WHERE Len(Trim(ProjectNumber)) > 0;
+
+DROP TABLE tmpProjekt;
+
+
+CALL Store_QVD('DIM_Projekt')
+
+END SUB
+///$tab Customers
+SUB Load_DIM_Kunder
+
+DIM_Kunder:
+LOAD
+    Company & '|' & CustomerNumber                    AS %Key_Kund,
+    CustomerNumber & ' - ' & Name                     AS Kund,
+    CustomerNumber                                    AS KundNummer,
+    Name                                              AS KundNamn,
+    Address1                                          AS Adress1,
+    Address2                                          AS Adress2,
+    City                                              AS Stad,
+    ZipCode                                           AS PostNummer
+FROM '$(vInputQVDName(Customers))' (qvd);
+
+
+CALL Store_QVD('DIM_Kunder')
+
+END SUB
+///$tab Kostnadsstället
+SUB Load_DIM_KostnadsStälle
+
+DIM_KostnadsStälle:
+LOAD
+    // Nyckel (kort & säker över flera bolag)
+    Company & '|' & Trim(Code)                       AS %Key_KostnadsStälle,
+    Trim(Code)                                       AS KostnadsStälleKod,
+    Description                                      AS KostnadsStälleNamn,
+    Trim(Code) & ' - ' & Description                 AS KostnadsStälle,
+    // Status som 0/1 istället för True/False
+    If(Active = 'True' OR Active = 1, 1, 0)          AS KostnadsStälle_Aktiv
+FROM '$(vInputQVDName(CostCenters))' (qvd)
+WHERE Match(Active, $(vActiveList));
+
+CALL Store_QVD('DIM_KostnadsStälle')
+
+END SUB
+///$tab Currencies
+SUB Load_FX_Valutor
+
+FX_Daglig:
+LOAD
+    Currency                                         AS Valuta,
+    %DateKey                                         AS Period,
+    CurrencyFactor                                   AS ValutaFaktor
+FROM '$(vQVD_Currencies(Valutor_Riksbanken))' (qvd);
+
+Concatenate(FX_Daglig)
+LOAD
+    Valuta,
+    'BR|' & MonthStart(Period)                       AS Period,
+    Date(MonthStart(Period),'YYYYMM') 				 AS MonthID,    // e.g. 202503 for March 2025
+    Avg(ValutaFaktor)                                AS FX_Snitt,  // Resultaträkning (genomsnittskurs)
+    FirstSortedValue(ValutaFaktor, -Period)          AS FX_ULM     // Balansräkning (ultimo-kurs)
+RESIDENT FX_Daglig
+WHERE Exists(Valuta)
+GROUP BY Valuta, MonthStart(Period);
+
+CALL Store_QVD('FX_Daglig')
+
+END SUB
+///$tab Financial Year
+SUB Load_DIM_FinancialYear
+
+DIM_FinancialYear:
+LOAD
+    Company & '|' & Id                               AS %Key_FinancialYear,
+    Year(FromDate) & '-' & Year(ToDate)              AS Räkenskapsår,
+    Id                                               AS RäkenskapsårID
+FROM '$(vInputQVDName(FinancialYearInfo))' (qvd);
+
+CALL Store_QVD('DIM_FinancialYear')
+
+END SUB
+
+///$tab Sheet Timer
+/*
+---------------------------------------------------------------------------------------------------------------------------------------
+Call this sub in the beginning and end of every section
+to know how long each section takes to load
+---------------------------------------------------------------------------------------------------------------------------------------
+*/
+
+// Start time with message
+SUB StartTimer(timerName)
+	TRACE ▶️ $(timerName);
+    LET "vStart_$(timerName)" = now();
+END Sub
+
+// End time and calculate exection time
+SUB EndTimer(timerName) 
+	LET "vEnd_$(timerName)" = now(); 
+    LET "vDuration_$(timerName)" = Interval(vEnd_$(timerName)-vStart_$(timerName),'hh:mm:ss');
+    TRACE ⏱️ Execution time ($(timerName)): $(vDuration_$(timerName));
+    
+    TimerLog: 
+    LOAD 
+    	'$(timerName)'				AS Section,
+        '$(vStart_$(timerName))'	AS StartTime,
+        '$(vEnd_$(timerName))'		AS EndTime,
+        '$(vDuration_$(timerName))' AS Duration
+    AUTOGENERATE 1;
+END SUB 
+///$tab Store QVD
+/*
+---------------------------------------------------------------------------------------------------------------------------------------
+Call this sub when storing a table.
+This sub handles:
+- Storing table to QVD
+- Tracing start and end
+- Logging file info (size, records, fields, timestamp)
+- Dropping the original table after storing
+---------------------------------------------------------------------------------------------------------------------------------------
+*/
+
+SUB Store_QVD(table)
+
+    // Build QVD output path
+    LET qvd_name = '$(vOutputQVDName($(table)))';
+
+    TRACE 📦 Storing QVD: $(qvd_name);
+    STORE $(table) INTO '$(qvd_name)' (qvd);
+
+    TRACE Stored: $(qvd_name);
+    TRACE Dropping table: $(table);
+    DROP TABLE [$(table)];
+
+    // Log QVD details
+    QVD:
+    LOAD 
+        '$(table)'                       AS Table,
+        FileSize('$(qvd_name)')          AS FileSize,
+        FileTime('$(qvd_name)')          AS FileTime,
+        QvdNoOfFields('$(qvd_name)')     AS Fields,
+        QvdNoOfRecords('$(qvd_name)')    AS Records
+    AUTOGENERATE 1;
+
+END SUB
+
+///$tab Main
+SET ThousandSep=' ';
+SET DecimalSep=',';
+SET MoneyThousandSep=' ';
+SET MoneyDecimalSep=',';
+SET MoneyFormat='# ##0,00 kr;-# ##0,00 kr';
+SET TimeFormat='hh:mm:ss';
+SET DateFormat='YYYY-MM-DD';
+SET TimestampFormat='YYYY-MM-DD hh:mm:ss[.fff]';
+SET FirstWeekDay=0;
+SET BrokenWeeks=0;
+SET ReferenceDay=4;
+SET FirstMonthOfYear=1;
+SET CollationLocale='sv-SE';
+SET CreateSearchIndexOnReload=0;
+SET MonthNames='jan.;feb.;mars;apr.;maj;juni;juli;aug.;sep.;okt.;nov.;dec.';
+SET LongMonthNames='januari;februari;mars;april;maj;juni;juli;augusti;september;oktober;november;december';
+SET DayNames='mån;tis;ons;tors;fre;lör;sön';
+SET LongDayNames='måndag;tisdag;onsdag;torsdag;fredag;lördag;söndag';
+SET NumericalAbbreviation='3:k;6:M;9:G;12:T;15:P;18:E;21:Z;24:Y;-3:m;-6:μ;-9:n;-12:p;-15:f;-18:a;-21:z;-24:y';
+
+
+// ================================================================================
+// Execution Logic
+// ================================================================================
+SUB Execute_Sub(sub_routine)
+    Call StartTimer('$(sub_routine)');
+    Call $(sub_routine);
+    Call EndTimer('$(sub_routine)');
+END SUB
+
+
+
+// ================================================================================
+// MAIN EXECUTION
+// ================================================================================
+
+CALL Execute_Sub('Variables')
+CALL Execute_Sub('Load_FX_Valutor')
+CALL Execute_Sub('Load_DIM_KostnadsStälle')
+CALL Execute_Sub('Load_DIM_Projekt')
+CALL Execute_Sub('Load_DIM_Konto')
+CALL Execute_Sub('Load_DIM_FinancialYear')
+CALL Execute_Sub('Load_DIM_Artiklar')
+CALL Execute_Sub('Load_DIM_Kunder')
+CALL Execute_Sub('Load_FCT_Faktura')
+CALL Execute_Sub('Load_FCT_Huvudbok')
