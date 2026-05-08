@@ -12,18 +12,20 @@
     Title       : Business Intelligence Consultant
     Company     : Kolibri Vision
     
-    This application is ONLY used to extract transaction tables for the first time. This application is made to be able to run from where it left of even if it times out due to taking more than 3 hours.
-    
     Enjoy!
 
     CHANGE LOG
     ==============================================================================
     ID		Date          User              Company          Description
     ==============================================================================
-    #002	2026-05-08	Rikard Larsson, Kolibri   Creation of QVD incremental load
-	#001	2026-05-07	Rikard Larsson, Kolibri   Created first draft 
+	#004	2026-03-03	Rikard Larsson, Kolibri   Added extract for Suppliers & Supplier invoice
+	#003	2026-03-02	Rikard Larsson, Kolibri   Added extract for Article, inventory & invoices
+	#002	2026-02-27	Rikard Larsson, Kolibri   Added extract for Customers,Accounts,CostCenter & projects
+	#001	2026-02-11	Rikard Larsson, Kolibri   Created first draft and extracting GL From Sandbox env.
     ==============================================================================
 */
+
+
 
 
 ///$tab ** Configuration **
@@ -49,7 +51,7 @@ LET vu_api_base_url      = 'https://api.fortnox.se/3/$1';
 CompanyLookup:
 LOAD * INLINE [
     Company        
-    QlikardsBolagNYABOLAG!!!         
+    QlikardsBolagNYABOLAG!!!           
         
 ];
 
@@ -201,6 +203,75 @@ END SUB
 
 
 
+///$tab --- DIM --
+
+///$tab Currencies
+SUB Extract_Currencies
+
+    // Store the minimum start year as a date
+    LET vMinStartYear = makedate('$(vDefaultStartYear)');
+
+    // Load currencies from API -> Used for riksbank extract.
+    SET vURL = '$(vu_api_base_url(currencies))';
+    LET vTable = 'Currencies';
+    
+    LET vIncrCurrencyQVD             	 = '$(vOutputQVDName($(vCompany),$(vTable)))';
+	LET vIncrementalCurrenciessAvailable    = If(Len(FileTime('$(vIncrCurrencyQVD)')) > 0, 1, 0);
+
+    If $(vIncrementalCurrenciessAvailable) =1 THEN
+        [DefaultStartYear]:
+    LOAD
+        Min(StartDate) AS DefaultStartYear
+    FROM '$(vIncrCurrencyQVD)' (qvd);
+    
+    LET vMinStartYear = Date(Peek('DefaultStartYear',0,'DefaultStartYear'),'$(DateFormat)');
+    
+    DROP TABLE DefaultStartYear;
+    
+    ELSE 
+    
+        // Store the minimum start year as a date
+    	LET vMinStartYear = makedate('$(vDefaultStartYear)');
+        
+    END IF
+    
+    LIB CONNECT TO '$(vConnection)';
+
+	RestConnectorMasterTable:
+	SQL SELECT 
+		"__KEY_root",
+		(SELECT 
+			"Code",
+			"__FK_Currencies"
+		FROM "Currencies" FK "__FK_Currencies")
+	FROM JSON (wrap on) "root" PK "__KEY_root"
+	    WITH CONNECTION (
+	        URL "$(vURL)",
+	        HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+	    );
+
+    // Load and tag currency codes with the minimum start year 
+    [$(vTable)]:
+    NoConcatenate
+    LOAD    
+        [Code],
+        '$(vMinStartYear)' AS StartDate
+    RESIDENT RestConnectorMasterTable
+    WHERE NOT IsNull([__FK_Currencies]);
+    
+    DROP TABLE RestConnectorMasterTable;
+	
+    // Store to QVD
+    CALL store_qvd('$(vTable)');
+
+END SUB
+
+
+
+
+
+
+
 ///$tab Financial Years
 SUB Extract_FinancialYears
 
@@ -252,6 +323,393 @@ SUB Extract_FinancialYears
 END SUB // Extract.FinancialYears
 
 
+///$tab Customers
+//#002
+SUB Extract_Customers
+
+    TRACE Extracting Customers for $(vCompany);
+
+    // --- Setup ---
+    SET vURL = '$(vu_api_base_url(customers))?limit=$(vAPILimit)';
+    SET vNoOfPages = 0;
+    LET vTable ='Customers';
+
+    LIB CONNECT TO '$(vConnection)';
+
+    // --- Get MetaInformation (e.g. total pages to fetch) ---
+    tmpMetaInformation:
+    SQL SELECT 
+        "__KEY_root",
+        (SELECT 
+            "@TotalResources",
+            "@TotalPages",
+            "@CurrentPage",
+            "__FK_MetaInformation"
+         FROM "MetaInformation" FK "__FK_MetaInformation")
+    FROM JSON (wrap on) "root" PK "__KEY_root"
+    WITH CONNECTION (
+        URL "$(vURL)",
+        HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+    );
+
+    MetaInformation:
+    LOAD
+        [@TotalPages] AS MaxPages
+    RESIDENT tmpMetaInformation
+    WHERE NOT IsNull([__FK_MetaInformation]);
+    
+
+    // Get number of pages from loaded metadata
+    LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInformation'),0);
+
+    // Clean up temporary tables
+    DROP TABLE tmpMetaInformation, MetaInformation;
+
+    TRACE Customers - Total Pages to Load: $(vNoOfPages);
+
+    // --- Loop over pages to extract customer data ---
+    FOR vPage = 1 TO $(vNoOfPages)
+
+        TRACE Loading Customer Page $(vPage);
+
+        RestConnectorMasterTable:
+        SQL 
+        SELECT 
+            "__KEY_root",
+            (SELECT 
+                "@url",
+                "Address1",
+                "Address2",
+                "City",
+                "CustomerNumber",
+                "Email",
+                "Name",
+                "OrganisationNumber",
+                "Phone",
+                "ZipCode",
+                "__FK_Customers"
+             FROM "Customers" FK "__FK_Customers")
+        FROM JSON (wrap on) "root" PK "__KEY_root"
+        WITH CONNECTION (
+            URL "$(vURL)&page=$(vPage)",
+            HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+        );
+
+        [$(vTable)]:
+        LOAD
+            [@url],
+            '$(vCompany)' AS Company,
+            [Address1],
+            [Address2],
+            [City],
+            [CustomerNumber],
+            [Email],
+            [Name],
+            [OrganisationNumber],
+            [Phone],
+            [ZipCode],
+            [__FK_Customers] AS [__KEY_root]
+        RESIDENT RestConnectorMasterTable
+        WHERE NOT IsNull([__FK_Customers]);
+
+        // Clean up for next iteration
+        DROP TABLE RestConnectorMasterTable;
+
+		Sleep 50;
+        
+    NEXT vPage
+
+    // --- Store final data ---
+    CALL store_qvd('$(vTable)');
+    
+END SUB // Extract_Customers
+
+///$tab Accounts
+//#002
+SUB Extract_Accounts
+
+    TRACE Starting Extract_Accounts for $(vCompany);
+
+    // --- Setup ---
+    SET vURL = '$(vu_api_base_url(accounts))?limit=$(vAPILimit)';
+    SET vNoOfPages = 0;
+    LET vTable ='Accounts';
+
+    LIB CONNECT TO '$(vConnection)';
+
+    // --- Get MetaInformation (e.g. total pages to fetch) ---
+    tmpMetaInformation:
+    SQL SELECT 
+        "__KEY_root",
+        (SELECT 
+            "@TotalResources",
+            "@TotalPages",
+            "@CurrentPage",
+            "__FK_MetaInformation"
+         FROM "MetaInformation" FK "__FK_MetaInformation")
+    FROM JSON (wrap on) "root" PK "__KEY_root"
+    WITH CONNECTION (
+        URL "$(vURL)",
+        HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+    );
+
+    MetaInformation:
+    LOAD
+        [@TotalPages] AS MaxPages
+    RESIDENT tmpMetaInformation
+    WHERE NOT IsNull([__FK_MetaInformation]);
+    
+
+    // Get number of pages from loaded metadata
+    LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInformation'),0);
+
+    // Clean up temporary tables
+    DROP TABLE tmpMetaInformation, MetaInformation;
+
+    TRACE Accounts - Total Pages to Load: $(vNoOfPages);
+
+    // --- Loop over pages to extract Account data ---
+    FOR vPage = 1 TO $(vNoOfPages)
+
+        TRACE Loading Accounts Page $(vPage);
+         RestConnectorMasterTable:
+            SQL SELECT 
+                "__KEY_root",
+                (SELECT 
+                    "@url",
+                    "Active",
+                    "BalanceBroughtForward",
+                    "CostCenter",
+                    "CostCenterSettings",
+                    "Description",
+                    "Number",
+                    "Project",
+                    "ProjectSettings",
+                    "SRU",
+                    "Year",
+                    "VATCode",
+                    "__FK_Accounts"
+                 FROM "Accounts" FK "__FK_Accounts")
+            FROM JSON (wrap on) "root" PK "__KEY_root"
+            WITH CONNECTION (
+                URL "$(vURL)&page=$(vPage)",
+                HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+            );
+
+            [$(vTable)]:
+            LOAD
+                [@url],
+                '$(vCompany)' AS Company,
+                [Active],
+                [BalanceBroughtForward],
+                [CostCenter],
+                [CostCenterSettings],
+                [Description],
+                [Number],
+                [Project],
+                [ProjectSettings],
+                [SRU],
+                [Year],
+                [VATCode],
+                [__FK_Accounts] AS [__KEY_root]
+            RESIDENT RestConnectorMasterTable
+            WHERE NOT IsNull([__FK_Accounts]);
+
+            DROP TABLE RestConnectorMasterTable;
+            
+			Sleep 50;
+            
+    NEXT vPage
+
+    // --- Store final data ---
+    CALL store_qvd('$(vTable)');
+    
+END SUB // Extract_Accounts
+
+///$tab Cost Center
+//#002
+SUB Extract_CostCenters
+
+    TRACE Starting Extract_CostCenters for $(vCompany);
+
+    // --- Setup ---
+    SET vURL = '$(vu_api_base_url(costcenters))?limit=$(vAPILimit)';
+    SET vNoOfPages = 0;
+    LET vTable ='CostCenters';
+
+    LIB CONNECT TO '$(vConnection)';
+
+    // --- Get MetaInformation (e.g. total pages to fetch) ---
+    tmpMetaInformation:
+    SQL SELECT 
+        "__KEY_root",
+        (SELECT 
+            "@TotalResources",
+            "@TotalPages",
+            "@CurrentPage",
+            "__FK_MetaInformation"
+         FROM "MetaInformation" FK "__FK_MetaInformation")
+    FROM JSON (wrap on) "root" PK "__KEY_root"
+    WITH CONNECTION (
+        URL "$(vURL)",
+        HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+    );
+
+    MetaInformation:
+    LOAD
+        [@TotalPages] AS MaxPages
+    RESIDENT tmpMetaInformation
+    WHERE NOT IsNull([__FK_MetaInformation]);
+    
+
+    // Get number of pages from loaded metadata
+    LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInformation'),0);
+
+    // Clean up temporary tables
+    DROP TABLE tmpMetaInformation, MetaInformation;
+
+    TRACE CostCenters - Total Pages to Load: $(vNoOfPages);
+
+    // --- Loop over pages to extract Cost Center data ---
+    FOR vPage = 1 TO $(vNoOfPages)
+
+        TRACE Loading CostCenters Page $(vPage);
+       
+        RestConnectorMasterTable:
+        SQL SELECT 
+            "__KEY_root",
+            (SELECT 
+                "@url",
+                "Code",
+                "Description",
+                "Note",
+                "Active",
+                "__FK_CostCenters"
+             FROM "CostCenters" FK "__FK_CostCenters")
+        FROM JSON (wrap on) "root" PK "__KEY_root"
+        WITH CONNECTION (
+            URL "$(vURL)&page=$(vPage)",
+            HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+        );
+
+        [$(vTable)]:
+        LOAD
+            [@url],
+            '$(vCompany)' AS Company,
+            [Code],
+            [Description],
+            [Note],
+            [Active],
+            [__FK_CostCenters] AS [__KEY_root]
+        RESIDENT RestConnectorMasterTable
+        WHERE NOT IsNull([__FK_CostCenters]);
+
+        DROP TABLE RestConnectorMasterTable;
+            
+		Sleep 50;
+            
+    NEXT vPage
+
+    // --- Store final data ---
+    CALL store_qvd('$(vTable)');
+    
+END SUB // Extract_CostCenters
+
+///$tab Projects
+//#002
+SUB Extract_Projects
+
+    TRACE Starting Extract_Projects for $(vCompany);
+
+    // --- Setup ---
+    SET vURL = '$(vu_api_base_url(projects))?limit=$(vAPILimit)';
+    SET vNoOfPages = 0;
+    LET vTable ='Projects';
+
+    LIB CONNECT TO '$(vConnection)';
+
+    // --- Get MetaInformation (e.g. total pages to fetch) ---
+    tmpMetaInformation:
+    SQL SELECT 
+        "__KEY_root",
+        (SELECT 
+            "@TotalResources",
+            "@TotalPages",
+            "@CurrentPage",
+            "__FK_MetaInformation"
+         FROM "MetaInformation" FK "__FK_MetaInformation")
+    FROM JSON (wrap on) "root" PK "__KEY_root"
+    WITH CONNECTION (
+        URL "$(vURL)",
+        HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+    );
+
+    MetaInformation:
+    LOAD
+        [@TotalPages] AS MaxPages
+    RESIDENT tmpMetaInformation
+    WHERE NOT IsNull([__FK_MetaInformation]);
+    
+
+    // Get number of pages from loaded metadata
+    LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInformation'),0);
+
+    // Clean up temporary tables
+    DROP TABLE tmpMetaInformation, MetaInformation;
+
+    TRACE Projects - Total Pages to Load: $(vNoOfPages);
+
+    // --- Loop over pages to extract Project data ---
+    FOR vPage = 1 TO $(vNoOfPages)
+
+        TRACE Loading Projects Page $(vPage);
+       
+        RestConnectorMasterTable:
+        SQL SELECT 
+            "__KEY_root",
+            (SELECT 
+                "@url",
+                "Description",
+                "EndDate",
+                "ProjectLeader",
+                "ProjectNumber",
+                "Status",
+                "StartDate",
+                "__FK_Projects"
+             FROM "Projects" FK "__FK_Projects")
+        FROM JSON (wrap on) "root" PK "__KEY_root"
+        WITH CONNECTION (
+            URL "$(vURL)&page=$(vPage)",
+            HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+        );
+
+        [$(vTable)]:
+        LOAD
+            [@url],
+            '$(vCompany)' AS Company,
+            [Description],
+            [EndDate],
+            [ProjectLeader],
+            [ProjectNumber],
+            [Status],
+            [StartDate],
+            [__FK_Projects] AS [__KEY_root]
+        RESIDENT RestConnectorMasterTable
+        WHERE NOT IsNull([__FK_Projects]);
+
+        DROP TABLE RestConnectorMasterTable;
+        
+		Sleep 50;
+            
+    NEXT vPage
+
+    // --- Store final data ---
+    CALL store_qvd('$(vTable)');
+    
+END SUB // Extract_Projects
+
+///$tab -- --
+
 ///$tab -- TRANS --
 
 ///$tab VoucherList
@@ -261,162 +719,101 @@ SUB Extract_Vouchers
 
     // --- Setup ---
     SET vURL = '$(vu_api_base_url(vouchers))';
-    LET vNoOfPages   = 0;
-    LET vCounter     = 0;
-    LET vTable       = 'Vouchers';
+    LET vNoOfPages = 0;
+    LET vCounter = 0;
+    LET vTable = 'Vouchers';
 
     // --- Check for existing QVD and determine incremental load date ---
-    CALL Check_incremental('$(vTable)');
-
+    CALL Check_incremental('$(vTable)'); // Check if incremental QVD avilable
+    
     LIB CONNECT TO '$(vConnection)';
+    
+    For each vFinancialYearID in $(vAllFinancialYears)
+            
+   		 // --- Get total pages for this financial year ---
+   		 tmpMetaInfoVouchers:
+   		 SQL SELECT 
+   		     "__KEY_root",
+   		     (SELECT 
+   		         "@TotalPages",
+                 "@TotalResources",
+   		         "__FK_MetaInformation"
+   		      FROM "MetaInformation" FK "__FK_MetaInformation")
+   		 FROM JSON (wrap on) "root" PK "__KEY_root"
+   		 WITH CONNECTION (
+   		     URL "$(vURL)?limit=$(vAPILimit)&financialyear=$(vFinancialYearID)&lastmodified=$(vIncrementalStartTime)",
+   		     HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		 );
+			
+      
+   		 MetaInfoVouchers:
+   		 LOAD
+   		     [@TotalPages] AS MaxPages,
+             [@TotalResources] AS TotalResources
+   		 RESIDENT tmpMetaInfoVouchers
+   		 WHERE NOT IsNull([__FK_MetaInformation]);
 
-    // -------------------------------------------------------------------------
-    // Load remaining URLs from previous failed run (if incremental)
-    // -------------------------------------------------------------------------
-    IF $(vIncrementalQVDsAvailable) = 1 THEN
-        LET qvd_url_name = '$(vOutputQVDName($(vCompany),Incremental_Settings/Remove_Voucher_URLs))';
+   		 LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInfoVouchers'),0);
+         Let vTotalResources = alt(Peek('TotalResources', 0, 'MetaInfoVouchers'),0);
+         
+         Let vTraceMessage = If(vTotalResources >0,'Total Voucher pages to load: $(vNoOfPages)','No updated records since last reload. Exiting Sub');
+         Trace $(vTraceMessage);
+         DROP VARIABLE vTraceMessage;
+         
+   		 DROP TABLE MetaInfoVouchers, tmpMetaInfoVouchers;
+         EXIT SUB UNLESS vTotalResources>0 // No new records
 
-        tmp_Voucher_URLs:
-        LOAD DISTINCT *
-        FROM '$(qvd_url_name)' (qvd);
+		
+   		 // --- Loop through pages ---
+   		 FOR vPage = 1 TO $(vNoOfPages)
+		
+   		     TRACE Loading Vouchers - FY: $(vFinancialYearID), Page $(vPage) of $(vNoOfPages);
+		
+   		     RestConnectorMasterTable:
+   		     SQL SELECT 
+   		         "__KEY_root",
+   		         (SELECT "@url" FROM "Vouchers" FK "__FK_Vouchers")
+   		     FROM JSON (wrap on) "root" PK "__KEY_root"
+   		     WITH CONNECTION (
+   		         URL "$(vURL)?limit=$(vAPILimit)&financialyear=$(vFinancialYearID)&lastmodified=$(vIncrementalStartTime)&page=$(vPage)",
+   		         HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		     );
+		
+   		     Voucher_URL:
+   		     LOAD [@url] AS URL
+   		     RESIDENT RestConnectorMasterTable
+   		     WHERE Len([@url]) > 0;
+		
+   		     DROP TABLE RestConnectorMasterTable;
+             
+//    		     // --- Extract each voucher via its URL ---
+   		     FOR EACH vLoopUrl IN FieldValueList('URL')
+   		         TRACE Fetching voucher from URL: $(vLoopUrl);
+   		         CALL Extract_VoucherDetails('$(vLoopUrl)');
+				 CALL CheckTokenExpired; // Refresh token if needed
+   		     NEXT vLoopUrl
+             
+   		     DROP TABLE Voucher_URL;
 
-        Voucher_URL:
-        NoConcatenate
-        LOAD *
-        RESIDENT tmp_Voucher_URLs
-        ORDER BY URL ASC;
-
-        DROP TABLE tmp_Voucher_URLs;
-    END IF
-
-    // -------------------------------------------------------------------------
-    // Loop through financial years and fetch voucher URLs
-    // -------------------------------------------------------------------------
-    FOR EACH vFinancialYearID IN $(vAllFinancialYears)
-
-        TRACE Processing Financial Year: $(vFinancialYearID);
-
-        // --- Get total pages and resources from API meta ---
-        tmpMetaInfoVouchers:
-        SQL SELECT 
-            "__KEY_root",
-            (SELECT 
-                "@TotalPages",
-                "@TotalResources",
-                "__FK_MetaInformation"
-             FROM "MetaInformation" FK "__FK_MetaInformation")
-        FROM JSON (wrap on) "root" PK "__KEY_root"
-        WITH CONNECTION (
-            URL "$(vURL)?limit=$(vAPILimit)&financialyear=$(vFinancialYearID)&lastmodified=$(vIncrementalStartTime)",
-            HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
-        );
-
-        MetaInfoVouchers:
-        LOAD
-            [@TotalPages]     AS MaxPages,
-            [@TotalResources] AS TotalResources
-        RESIDENT tmpMetaInfoVouchers
-        WHERE NOT IsNull([__FK_MetaInformation]);
-
-        LET vNoOfPages      = alt(Peek('MaxPages',      0, 'MetaInfoVouchers'), 0);
-        LET vTotalResources = alt(Peek('TotalResources', 0, 'MetaInfoVouchers'), 0);
-
-        LET vTraceMessage = If($(vTotalResources) > 0,
-            'Total Voucher pages to load for FY $(vFinancialYearID): $(vNoOfPages)',
-            'No updated records for FY $(vFinancialYearID). Skipping.');
-        TRACE $(vTraceMessage);
-        DROP VARIABLE vTraceMessage;
-        DROP TABLE MetaInfoVouchers, tmpMetaInfoVouchers;
-
-        // --- Fetch all voucher URLs for this financial year (paginated) ---
-        FOR vPage = 1 TO $(vNoOfPages)
-
-            TRACE Loading Vouchers - FY: $(vFinancialYearID), Page $(vPage) of $(vNoOfPages);
-
-            RestConnectorMasterTable:
-            SQL SELECT 
-                "__KEY_root",
-                (SELECT "@url" FROM "Vouchers" FK "__FK_Vouchers")
-            FROM JSON (wrap on) "root" PK "__KEY_root"
-            WITH CONNECTION (
-                URL "$(vURL)?limit=$(vAPILimit)&financialyear=$(vFinancialYearID)&lastmodified=$(vIncrementalStartTime)&page=$(vPage)",
-                HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
-            );
-
-            Voucher_URL:
-            LOAD DISTINCT [@url] AS URL
-            RESIDENT RestConnectorMasterTable
-            WHERE Len([@url]) > 0;
-
-            DROP TABLE RestConnectorMasterTable;
-
-        NEXT vPage
-
-    NEXT vFinancialYearID
-
-    // --- Merge with incremental URLs if applicable ---
-    IF $(vIncrementalQVDsAvailable) = 1 THEN
-        CALL Incremental_Load('Incremental_Settings/Remove_Voucher_URLs');
-    END IF
-
-    // --- Exit if nothing to process ---
-    EXIT SUB UNLESS NoOfRows('Voucher_URL') > 0;
-
-    // -------------------------------------------------------------------------
-    // Loop through each voucher URL and extract details
-    // -------------------------------------------------------------------------
-    FOR EACH vLoopUrl IN FieldValueList('URL')
-
-        TRACE Fetching Voucher from URL: $(vLoopUrl);
-        CALL Extract_VoucherDetails('$(vLoopUrl)');
-        CALL CheckTokenExpired;
-
-        // --- Remove processed URL and update resume QVD ---
-        Remove_Voucher_URLs:
-        NoConcatenate
-        LOAD DISTINCT URL
-        RESIDENT Voucher_URL
-        WHERE URL <> '$(vLoopUrl)'
-        ORDER BY URL ASC;
-
-        DROP TABLE Voucher_URL;
-
-        LET qvd_url_name = '$(vOutputQVDName($(vCompany),Incremental_Settings/Remove_Voucher_URLs))';
-        TRACE Storing resume QVD to: $(qvd_url_name);
-        STORE Remove_Voucher_URLs INTO '$(qvd_url_name)' (qvd);
-
-        RENAME TABLE Remove_Voucher_URLs TO Voucher_URL;
-
-        // --- Append company metadata and store voucher data ---
-        JOIN($(vTable)_Rows)
-        LOAD
-            *,
-            '$(vStartTime)' AS lastmodify,
-            '$(vCompany)'   AS Company
-        RESIDENT [$(vTable)];
-
-        DROP TABLE [$(vTable)];
-        RENAME TABLE [$(vTable)_Rows] TO [$(vTable)];
-
-        // --- Store incremental QVD ---
-        CALL Incremental_Load('$(vTable)');
-        CALL store_qvd('$(vTable)');
-        exit script
-
-    NEXT vLoopUrl
-
-    DROP TABLE Voucher_URL;
-
-    // -------------------------------------------------------------------------
-    // Final processing
-    // -------------------------------------------------------------------------
+   		 NEXT  vPage
+         
+	NEXT vFinancialYearID
+    
+	LEFT JOIN($(vTable)_Rows)
+	LOAD *,
+	'$(vStartTime)' 		as lastmodify,		
+	'$(vCompany)' 			AS Company 
+	RESIDENT [$(vTable)];	
+	DROP TABLE [$(vTable)];
+    
+    RENAME TABLE [$(vTable)_Rows] TO [$(vTable)];
+    
+    // --- Final processing ---
+    CALL AddTag('$(vTable)');
     CALL Incremental_Load('$(vTable)');
     CALL store_qvd('$(vTable)');
 
 END SUB
-
-
-
 
 ///$tab VoucerTransactions
 // Denna funktion hämtar ut en viss voucher i samband med att vi loopar runt VoucherList.
@@ -503,145 +900,96 @@ SUB Extract_Invoices
 
     // --- Setup ---
     SET vURL = '$(vu_api_base_url(invoices))';
-    LET vNoOfPages   = 0;
-    LET vCounter     = 0;
-    LET vTable       = 'Invoices';
+    LET vNoOfPages = 0;
+    LET vCounter = 0;
+    LET vTable = 'Invoices';
 
     // --- Check for existing QVD and determine incremental load date ---
-    CALL Check_incremental('$(vTable)');
+    CALL Check_incremental('$(vTable)'); // Check if incremental QVD avilable
     
     LIB CONNECT TO '$(vConnection)';
+                
+   		 // --- Get total pages for this financial year ---
+   		 tmpMetaInfoInvoices:
+   		 SQL SELECT 
+   		     "__KEY_root",
+   		     (SELECT 
+   		         "@TotalPages",
+                 "@TotalResources",
+   		         "__FK_MetaInformation"
+   		      FROM "MetaInformation" FK "__FK_MetaInformation")
+   		 FROM JSON (wrap on) "root" PK "__KEY_root"
+   		 WITH CONNECTION (
+   		     URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)",
+   		     HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		 );
+			
+      
+   		 MetaInfoInvoices:
+   		 LOAD
+   		     [@TotalPages] AS MaxPages,
+             [@TotalResources] AS TotalResources
+   		 RESIDENT tmpMetaInfoInvoices
+   		 WHERE NOT IsNull([__FK_MetaInformation]);
 
-    // -------------------------------------------------------------------------
-    // Get total pages and resources from API meta
-    // -------------------------------------------------------------------------
-    tmpMetaInfoInvoices:
-    SQL SELECT 
-        "__KEY_root",
-        (SELECT 
-            "@TotalPages",
-            "@TotalResources",
-            "__FK_MetaInformation"
-         FROM "MetaInformation" FK "__FK_MetaInformation")
-    FROM JSON (wrap on) "root" PK "__KEY_root"
-    WITH CONNECTION (
-        URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)",
-        HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
-    );
+   		 LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInfoInvoices'),0);
+         Let vTotalResources = alt(Peek('TotalResources', 0, 'MetaInfoInvoices'),0);
+         
+   		 Let vTraceMessage = If(vTotalResources >0,'Total Invoice pages to load: $(vNoOfPages)','No updated records since last reload. Exiting Sub');
+         Trace $(vTraceMessage);
+         DROP VARIABLE vTraceMessage;
+   		 DROP TABLE MetaInfoInvoices,tmpMetaInfoInvoices;
+		
+         EXIT SUB UNLESS vTotalResources>0 // No new records
+         
+   		 // --- Loop through pages ---
+   		 FOR vPage = 1 TO $(vNoOfPages)
+		
+   		     TRACE Loading Invoices - FY: $(vFinancialYearID), Page $(vPage) of $(vNoOfPages);
+		
+   		     RestConnectorMasterTable:
+   		     SQL SELECT 
+   		         "__KEY_root",
+   		         (SELECT "@url" FROM "Invoices" FK "__FK_Invoices")
+   		     FROM JSON (wrap on) "root" PK "__KEY_root"
+   		     WITH CONNECTION (
+   		         URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)&page=$(vPage)",
+   		         HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		     );
+		
+   		     Invoice_URLs:
+   		     LOAD [@url] AS URL
+   		     RESIDENT RestConnectorMasterTable
+   		     WHERE Len([@url]) > 0;
+		
+   		     DROP TABLE RestConnectorMasterTable;
+   		     // --- Extract each Invoice via its URL ---
+   		     FOR EACH vLoopUrl IN FieldValueList('URL')
+   		        TRACE Fetching Invoice from URL: $(vLoopUrl);
+   		        CALL Extract_InvoiceDetails('$(vLoopUrl)');
+				CALL CheckTokenExpired; // Refresh token if needed
+   		     NEXT vLoopUrl
 
-    MetaInfoInvoices:
-    LOAD
-        [@TotalPages]     AS MaxPages,
-        [@TotalResources] AS TotalResources
-    RESIDENT tmpMetaInfoInvoices
-    WHERE NOT IsNull([__FK_MetaInformation]);
+   		     DROP TABLE Invoice_URLs;
 
-    LET vNoOfPages      = alt(Peek('MaxPages',      0, 'MetaInfoInvoices'), 0);
-    LET vTotalResources = alt(Peek('TotalResources', 0, 'MetaInfoInvoices'), 0);
-
-    LET vTraceMessage = If($(vTotalResources) > 0,
-        'Total Invoice pages to load: $(vNoOfPages)',
-        'No updated records since last reload.');
-    TRACE $(vTraceMessage);
-    DROP VARIABLE vTraceMessage;
-    DROP TABLE MetaInfoInvoices, tmpMetaInfoInvoices;
-
-    // -------------------------------------------------------------------------
-    // Load remaining URLs from previous failed run (if incremental)
-    // -------------------------------------------------------------------------
-    IF $(vIncrementalQVDsAvailable) = 1 THEN
-        LET qvd_url_name = '$(vOutputQVDName($(vCompany),Incremental_Settings/Remove_Invoice_URLs))';
-
-        tmp_Invoice_URLs:
-        LOAD DISTINCT *
-        FROM '$(qvd_url_name)' (qvd);
-
-        Invoice_URLs:
-        NoConcatenate
-        LOAD *
-        RESIDENT tmp_Invoice_URLs
-        ORDER BY URL ASC;
-
-        DROP TABLE tmp_Invoice_URLs;
-    END IF
-
-    // --- Exit if nothing to process ---
-    EXIT SUB UNLESS $(vTotalResources) > 0 OR NoOfRows('Invoice_URLs') > 0;
-
-    // -------------------------------------------------------------------------
-    // Fetch all invoice URLs from API (paginated)
-    // -------------------------------------------------------------------------
-    FOR vPage = 1 TO $(vNoOfPages)
-
-        TRACE Loading Invoices - Page $(vPage) of $(vNoOfPages);
-
-        RestConnectorMasterTable:
-        SQL SELECT 
-            "__KEY_root",
-            (SELECT "@url" FROM "Invoices" FK "__FK_Invoices")
-        FROM JSON (wrap on) "root" PK "__KEY_root"
-        WITH CONNECTION (
-            URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)&page=$(vPage)",
-            HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
-        );
-
-        Invoice_URLs:
-        LOAD DISTINCT [@url] AS URL
-        RESIDENT RestConnectorMasterTable
-        WHERE Len([@url]) > 0;
-
-        DROP TABLE RestConnectorMasterTable;
-
-    NEXT vPage
-
-    // --- Merge with incremental URLs if applicable ---
-    IF $(vIncrementalQVDsAvailable) = 1 THEN
-        CALL Incremental_Load('Incremental_Settings/Remove_Invoice_URLs');
-    END IF
-
-    // -------------------------------------------------------------------------
-    // Loop through each invoice URL and extract details
-    // -------------------------------------------------------------------------
-    FOR EACH vLoopUrl IN FieldValueList('URL')
-
-        TRACE Fetching Invoice from URL: $(vLoopUrl);
-        CALL Extract_InvoiceDetails('$(vLoopUrl)');
-        CALL CheckTokenExpired;
-
-        // --- Remove processed URL and update resume QVD ---
-        Remove_Invoice_URLs:
-        NoConcatenate
-        LOAD DISTINCT URL
-        RESIDENT Invoice_URLs
-        WHERE URL <> '$(vLoopUrl)'
-        ORDER BY URL ASC;
-
-        DROP TABLE Invoice_URLs;
-
-        LET qvd_url_name = '$(vOutputQVDName($(vCompany),Incremental_Settings/Remove_Invoice_URLs))';
-        TRACE Storing resume QVD to: $(qvd_url_name);
-        STORE Remove_Invoice_URLs INTO '$(qvd_url_name)' (qvd);
-
-        RENAME TABLE Remove_Invoice_URLs TO Invoice_URLs;
-
-        // --- Append company metadata and store invoice data ---
-        JOIN($(vTable)_Rows)
-        LOAD
-            *,
-            '$(vStartTime)' AS lastmodify,
-            '$(vCompany)'   AS Company
-        RESIDENT [$(vTable)];
-
-        DROP TABLE [$(vTable)];
-        RENAME TABLE [$(vTable)_Rows] TO [$(vTable)];
-
-        // --- Store incremental QVD ---
-        CALL Incremental_Load('$(vTable)');
-        CALL store_qvd('$(vTable)');
-        
-    NEXT vLoopUrl
+   		 NEXT  vPage
+             
+	LEFT JOIN($(vTable)_Rows)
+    LOAD  *,
+		'$(vStartTime)' 		as lastmodify,		
+		'$(vCompany)' 			AS Company 
+	RESIDENT [$(vTable)];	
+	DROP TABLE [$(vTable)];
+    
+    RENAME TABLE [$(vTable)_Rows] TO [$(vTable)];
+    
+    // --- Final processing ---
+    CALL AddTag('$(vTable)');
+    CALL Incremental_Load('$(vTable)');
+    CALL store_qvd('$(vTable)');
 
 END SUB
+
 ///$tab Invoice Rows
 SUB Extract_InvoiceDetails(_URL)
 
@@ -899,153 +1247,104 @@ SUB Extract_InvoiceDetails(_URL)
 
 END SUB
 ///$tab Supplier Invoice
+//#004
 SUB Extract_SupplierInvoices
 
     TRACE Starting Extract_SupplierInvoices for $(vCompany);
 
     // --- Setup ---
     SET vURL = '$(vu_api_base_url(supplierinvoices))';
-    LET vNoOfPages   = 0;
-    LET vCounter     = 0;
-    LET vTable       = 'SupplierInvoices';
+    LET vNoOfPages = 0;
+    LET vCounter = 0;
+    LET vTable = 'SupplierInvoices';
 
     // --- Check for existing QVD and determine incremental load date ---
-    CALL Check_incremental('$(vTable)');
-
+    CALL Check_incremental('$(vTable)'); // Check if incremental QVD avilable
+     
     LIB CONNECT TO '$(vConnection)';
+                
+   		 // --- Get total pages for this financial year ---
+   		 tmpMetaInfoSupplierInvoices:
+   		 SQL SELECT 
+   		     "__KEY_root",
+   		     (SELECT 
+   		         "@TotalPages",
+                 "@TotalResources",
+   		         "__FK_MetaInformation"
+   		      FROM "MetaInformation" FK "__FK_MetaInformation")
+   		 FROM JSON (wrap on) "root" PK "__KEY_root"
+   		 WITH CONNECTION (
+   		     URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)",
+   		     HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		 );
+			
+      
+   		 MetaInfoSupplierInvoices:
+   		 LOAD
+   		     [@TotalPages] AS MaxPages,
+             [@TotalResources] AS TotalResources
+   		 RESIDENT tmpMetaInfoSupplierInvoices
+   		 WHERE NOT IsNull([__FK_MetaInformation]);
 
-    // -------------------------------------------------------------------------
-    // Get total pages and resources from API meta
-    // -------------------------------------------------------------------------
-    tmpMetaInfoSupplierInvoices:
-    SQL SELECT 
-        "__KEY_root",
-        (SELECT 
-            "@TotalPages",
-            "@TotalResources",
-            "__FK_MetaInformation"
-         FROM "MetaInformation" FK "__FK_MetaInformation")
-    FROM JSON (wrap on) "root" PK "__KEY_root"
-    WITH CONNECTION (
-        URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)",
-        HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
-    );
+   		 LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInfoSupplierInvoices'),0);
+         Let vTotalResources = alt(Peek('TotalResources', 0, 'MetaInfoSupplierInvoices'),0);
+         
+   		 Let vTraceMessage = If(vTotalResources >0,'Total SupplierInvoice pages to load: $(vNoOfPages)','No updated records since last reload. Exiting Sub');
+         Trace $(vTraceMessage);
+         DROP VARIABLE vTraceMessage;
+         
+   		 DROP TABLE MetaInfoSupplierInvoices,tmpMetaInfoSupplierInvoices;
+		
+         EXIT SUB UNLESS vTotalResources>0 // No new records
+         
+   		 // --- Loop through pages ---
+   		 FOR vPage = 1 TO $(vNoOfPages)
+		
+   		     TRACE Loading SupplierInvoices - FY: $(vFinancialYearID), Page $(vPage) of $(vNoOfPages);
+		
+   		     RestConnectorMasterTable:
+   		     SQL SELECT 
+   		         "__KEY_root",
+   		         (SELECT "@url" FROM "SupplierInvoices" FK "__FK_SupplierInvoices")
+   		     FROM JSON (wrap on) "root" PK "__KEY_root"
+   		     WITH CONNECTION (
+   		         URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)&page=$(vPage)",
+   		         HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		     );
+		
+   		     SupplierInvoice_URLs:
+   		     LOAD [@url] AS URL
+   		     RESIDENT RestConnectorMasterTable
+   		     WHERE Len([@url]) > 0;
+		
+   		     DROP TABLE RestConnectorMasterTable;
+//    		     // --- Extract each SupplierInvoice via its URL ---
+   		     FOR EACH vLoopUrl IN FieldValueList('URL')
+   		        TRACE Fetching SupplierInvoice from URL: $(vLoopUrl);
+   		        CALL Extract_SupplierInvoiceRows('$(vLoopUrl)');
+				CALL CheckTokenExpired; // Refresh token if needed
+   		     NEXT vLoopUrl
 
-    MetaInfoSupplierInvoices:
-    LOAD
-        [@TotalPages]     AS MaxPages,
-        [@TotalResources] AS TotalResources
-    RESIDENT tmpMetaInfoSupplierInvoices
-    WHERE NOT IsNull([__FK_MetaInformation]);
+   		     DROP TABLE SupplierInvoice_URLs;
 
-    LET vNoOfPages      = alt(Peek('MaxPages',      0, 'MetaInfoSupplierInvoices'), 0);
-    LET vTotalResources = alt(Peek('TotalResources', 0, 'MetaInfoSupplierInvoices'), 0);
-
-    LET vTraceMessage = If($(vTotalResources) > 0,
-        'Total SupplierInvoice pages to load: $(vNoOfPages)',
-        'No updated records since last reload.');
-    TRACE $(vTraceMessage);
-    DROP VARIABLE vTraceMessage;
-    DROP TABLE MetaInfoSupplierInvoices, tmpMetaInfoSupplierInvoices;
-
-    // -------------------------------------------------------------------------
-    // Load remaining URLs from previous failed run (if incremental)
-    // -------------------------------------------------------------------------
-    IF $(vIncrementalQVDsAvailable) = 1 THEN
-        LET qvd_url_name = '$(vOutputQVDName($(vCompany),Incremental_Settings/Remove_SupplierInvoice_URLs))';
-
-        tmp_SupplierInvoice_URLs:
-        LOAD DISTINCT *
-        FROM '$(qvd_url_name)' (qvd);
-
-        SupplierInvoice_URLs:
-        NoConcatenate
-        LOAD *
-        RESIDENT tmp_SupplierInvoice_URLs
-        ORDER BY URL ASC;
-
-        DROP TABLE tmp_SupplierInvoice_URLs;
-    END IF
-
-    // --- Exit if nothing to process ---
-    EXIT SUB UNLESS $(vTotalResources) > 0 OR NoOfRows('SupplierInvoice_URLs') > 0;
-
-    // -------------------------------------------------------------------------
-    // Fetch all supplier invoice URLs from API (paginated)
-    // -------------------------------------------------------------------------
-    FOR vPage = 1 TO $(vNoOfPages)
-
-        TRACE Loading SupplierInvoices - Page $(vPage) of $(vNoOfPages);
-
-        RestConnectorMasterTable:
-        SQL SELECT 
-            "__KEY_root",
-            (SELECT "@url" FROM "SupplierInvoices" FK "__FK_SupplierInvoices")
-        FROM JSON (wrap on) "root" PK "__KEY_root"
-        WITH CONNECTION (
-            URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)&page=$(vPage)",
-            HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
-        );
-
-        SupplierInvoice_URLs:
-        LOAD DISTINCT [@url] AS URL
-        RESIDENT RestConnectorMasterTable
-        WHERE Len([@url]) > 0;
-
-        DROP TABLE RestConnectorMasterTable;
-
-    NEXT vPage
-
-    // --- Merge with incremental URLs if applicable ---
-    IF $(vIncrementalQVDsAvailable) = 1 THEN
-        CALL Incremental_Load('Incremental_Settings/Remove_SupplierInvoice_URLs');
-    END IF
-
-    // -------------------------------------------------------------------------
-    // Loop through each supplier invoice URL and extract details
-    // -------------------------------------------------------------------------
-    FOR EACH vLoopUrl IN FieldValueList('URL')
-
-        TRACE Fetching SupplierInvoice from URL: $(vLoopUrl);
-        CALL Extract_SupplierInvoiceRows('$(vLoopUrl)');
-        CALL CheckTokenExpired;
-
-        // --- Remove processed URL and update resume QVD ---
-        Remove_SupplierInvoice_URLs:
-        NoConcatenate
-        LOAD DISTINCT URL
-        RESIDENT SupplierInvoice_URLs
-        WHERE URL <> '$(vLoopUrl)'
-        ORDER BY URL ASC;
-
-        DROP TABLE SupplierInvoice_URLs;
-
-        LET qvd_url_name = '$(vOutputQVDName($(vCompany),Incremental_Settings/Remove_SupplierInvoice_URLs))';
-        TRACE Storing resume QVD to: $(qvd_url_name);
-        STORE Remove_SupplierInvoice_URLs INTO '$(qvd_url_name)' (qvd);
-
-        RENAME TABLE Remove_SupplierInvoice_URLs TO SupplierInvoice_URLs;
-
-        // --- Append company metadata and store supplier invoice data ---
-        JOIN($(vTable)_Rows)
-        LOAD
-            *,
-            '$(vStartTime)' AS lastmodify,
-            '$(vCompany)'   AS Company
-        RESIDENT [$(vTable)];
-
-        DROP TABLE [$(vTable)];
-        RENAME TABLE [$(vTable)_Rows] TO [$(vTable)];
-
-        // --- Store incremental QVD ---
-        CALL Incremental_Load('$(vTable)');
-        CALL store_qvd('$(vTable)');
-        
-        exit script
-
-    NEXT vLoopUrl
+   		 NEXT  vPage
+             
+  	LEFT JOIN($(vTable)_Rows)
+    LOAD  *,
+		'$(vStartTime)' 		as lastmodify,		
+		'$(vCompany)' 			AS Company 
+	RESIDENT [$(vTable)];	
+	DROP TABLE [$(vTable)];
+    
+    RENAME TABLE [$(vTable)_Rows] TO [$(vTable)];
+    
+    // --- Final processing ---
+    CALL AddTag('$(vTable)');
+    CALL Incremental_Load('$(vTable)');
+    CALL store_qvd('$(vTable)');
 
 END SUB
+
 ///$tab Supplier Invoice Rows
 // #004
 SUB Extract_SupplierInvoiceRows(_URL)
@@ -1203,145 +1502,94 @@ SUB Extract_Orders
 
     // --- Setup ---
     SET vURL = '$(vu_api_base_url(orders))';
-    LET vNoOfPages   = 0;
-    LET vCounter     = 0;
-    LET vTable       = 'Orders';
+    LET vNoOfPages = 0;
+    LET vCounter = 0;
+    LET vTable = 'Orders';
 
     // --- Check for existing QVD and determine incremental load date ---
-    CALL Check_incremental('$(vTable)');
-
+    CALL Check_incremental('$(vTable)'); // Check if incremental QVD avilable
+     
     LIB CONNECT TO '$(vConnection)';
+                
+   		 // --- Get total pages for this financial year ---
+   		 tmpMetaInfoOrders:
+   		 SQL SELECT 
+   		     "__KEY_root",
+   		     (SELECT 
+   		         "@TotalPages",
+                 "@TotalResources",
+   		         "__FK_MetaInformation"
+   		      FROM "MetaInformation" FK "__FK_MetaInformation")
+   		 FROM JSON (wrap on) "root" PK "__KEY_root"
+   		 WITH CONNECTION (
+   		     URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)",
+   		     HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		 );
+			
+      
+   		 MetaInfoOrders:
+   		 LOAD
+   		     [@TotalPages] AS MaxPages,
+             [@TotalResources] AS TotalResources
+   		 RESIDENT tmpMetaInfoOrders
+   		 WHERE NOT IsNull([__FK_MetaInformation]);
 
-    // -------------------------------------------------------------------------
-    // Get total pages and resources from API meta
-    // -------------------------------------------------------------------------
-    tmpMetaInfoOrders:
-    SQL SELECT 
-        "__KEY_root",
-        (SELECT 
-            "@TotalPages",
-            "@TotalResources",
-            "__FK_MetaInformation"
-         FROM "MetaInformation" FK "__FK_MetaInformation")
-    FROM JSON (wrap on) "root" PK "__KEY_root"
-    WITH CONNECTION (
-        URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)",
-        HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
-    );
+   		 LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInfoOrders'),0);
+         Let vTotalResources = alt(Peek('TotalResources', 0, 'MetaInfoOrders'),0);
+         
+   		 Let vTraceMessage = If(vTotalResources >0,'Total Order pages to load: $(vNoOfPages)','No updated records since last reload. Exiting Sub');
+         Trace $(vTraceMessage);
+         DROP VARIABLE vTraceMessage;
+         
+   		 DROP TABLE MetaInfoOrders,tmpMetaInfoOrders;
+		
+         EXIT SUB UNLESS vTotalResources>0 // No new records
+         
+   		 // --- Loop through pages ---
+   		 FOR vPage = 1 TO $(vNoOfPages)
+		
+   		     TRACE Loading Orders - FY: $(vFinancialYearID), Page $(vPage) of $(vNoOfPages);
+		
+   		     RestConnectorMasterTable:
+   		     SQL SELECT 
+   		         "__KEY_root",
+   		         (SELECT "@url" FROM "Orders" FK "__FK_Orders")
+   		     FROM JSON (wrap on) "root" PK "__KEY_root"
+   		     WITH CONNECTION (
+   		         URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)&page=$(vPage)",
+   		         HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		     );
+		
+   		     Order_URLs:
+   		     LOAD [@url] AS URL
+   		     RESIDENT RestConnectorMasterTable
+   		     WHERE Len([@url]) > 0;
+		
+   		     DROP TABLE RestConnectorMasterTable;
+//    		     // --- Extract each Order via its URL ---
+   		     FOR EACH vLoopUrl IN FieldValueList('URL')
+   		        TRACE Fetching Order from URL: $(vLoopUrl);
+   		        CALL Extract_OrderRows('$(vLoopUrl)');
+				CALL CheckTokenExpired; // Refresh token if needed
+   		     NEXT vLoopUrl
 
-    MetaInfoOrders:
-    LOAD
-        [@TotalPages]     AS MaxPages,
-        [@TotalResources] AS TotalResources
-    RESIDENT tmpMetaInfoOrders
-    WHERE NOT IsNull([__FK_MetaInformation]);
+   		     DROP TABLE Order_URLs;
 
-    LET vNoOfPages      = alt(Peek('MaxPages',      0, 'MetaInfoOrders'), 0);
-    LET vTotalResources = alt(Peek('TotalResources', 0, 'MetaInfoOrders'), 0);
-
-    LET vTraceMessage = If($(vTotalResources) > 0,
-        'Total Order pages to load: $(vNoOfPages)',
-        'No updated records since last reload.');
-    TRACE $(vTraceMessage);
-    DROP VARIABLE vTraceMessage;
-    DROP TABLE MetaInfoOrders, tmpMetaInfoOrders;
-
-    // -------------------------------------------------------------------------
-    // Load remaining URLs from previous failed run (if incremental)
-    // -------------------------------------------------------------------------
-    IF $(vIncrementalQVDsAvailable) = 1 THEN
-        LET qvd_url_name = '$(vOutputQVDName($(vCompany),Incremental_Settings/Remove_Order_URLs))';
-
-        tmp_Order_URLs:
-        LOAD DISTINCT *
-        FROM '$(qvd_url_name)' (qvd);
-
-        Order_URLs:
-        NoConcatenate
-        LOAD *
-        RESIDENT tmp_Order_URLs
-        ORDER BY URL ASC;
-
-        DROP TABLE tmp_Order_URLs;
-    END IF
-
-    // --- Exit if nothing to process ---
-    EXIT SUB UNLESS $(vTotalResources) > 0 OR NoOfRows('Order_URLs') > 0;
-
-    // -------------------------------------------------------------------------
-    // Fetch all order URLs from API (paginated)
-    // -------------------------------------------------------------------------
-    FOR vPage = 1 TO $(vNoOfPages)
-
-        TRACE Loading Orders - Page $(vPage) of $(vNoOfPages);
-
-        RestConnectorMasterTable:
-        SQL SELECT 
-            "__KEY_root",
-            (SELECT "@url" FROM "Orders" FK "__FK_Orders")
-        FROM JSON (wrap on) "root" PK "__KEY_root"
-        WITH CONNECTION (
-            URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)&page=$(vPage)",
-            HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
-        );
-
-        Order_URLs:
-        LOAD DISTINCT [@url] AS URL
-        RESIDENT RestConnectorMasterTable
-        WHERE Len([@url]) > 0;
-
-        DROP TABLE RestConnectorMasterTable;
-
-    NEXT vPage
-
-    // --- Merge with incremental URLs if applicable ---
-    IF $(vIncrementalQVDsAvailable) = 1 THEN
-        CALL Incremental_Load('Incremental_Settings/Remove_Order_URLs');
-    END IF
-
-    // -------------------------------------------------------------------------
-    // Loop through each order URL and extract details
-    // -------------------------------------------------------------------------
-    FOR EACH vLoopUrl IN FieldValueList('URL')
-
-        TRACE Fetching Order from URL: $(vLoopUrl);
-        CALL Extract_OrderRows('$(vLoopUrl)');
-        CALL CheckTokenExpired;
-
-        // --- Remove processed URL and update resume QVD ---
-        Remove_Order_URLs:
-        NoConcatenate
-        LOAD DISTINCT URL
-        RESIDENT Order_URLs
-        WHERE URL <> '$(vLoopUrl)'
-        ORDER BY URL ASC;
-
-        DROP TABLE Order_URLs;
-
-        LET qvd_url_name = '$(vOutputQVDName($(vCompany),Incremental_Settings/Remove_Order_URLs))';
-        TRACE Storing resume QVD to: $(qvd_url_name);
-        STORE Remove_Order_URLs INTO '$(qvd_url_name)' (qvd);
-
-        RENAME TABLE Remove_Order_URLs TO Order_URLs;
-
-        // --- Append company metadata and store order data ---
-        JOIN($(vTable)_Rows)
-        LOAD
-            *,
-            '$(vStartTime)' AS lastmodify,
-            '$(vCompany)'   AS Company
-        RESIDENT [$(vTable)];
-
-        DROP TABLE [$(vTable)];
-        RENAME TABLE [$(vTable)_Rows] TO [$(vTable)];
-
-        // --- Store incremental QVD ---
-        CALL Incremental_Load('$(vTable)');
-        CALL store_qvd('$(vTable)');
-        
-        exit script
-
-    NEXT vLoopUrl
+   		 NEXT  vPage
+             
+  	LEFT JOIN($(vTable)_Rows)
+    LOAD  *,
+		'$(vStartTime)' 		as lastmodify,		
+		'$(vCompany)' 			AS Company 
+	RESIDENT [$(vTable)];	
+	DROP TABLE [$(vTable)];
+    
+    RENAME TABLE [$(vTable)_Rows] TO [$(vTable)];
+    
+    // --- Final processing ---
+    CALL AddTag('$(vTable)');
+    CALL Incremental_Load('$(vTable)');
+    CALL store_qvd('$(vTable)');
 
 END SUB
 
@@ -1566,10 +1814,234 @@ SUB Extract_OrderRows(_URL)
       Sleep 50;       // Rate limiting pause – avoid hitting Fortnox API limits
       
 END SUB
+///$tab Articles & Inventory
+//#003
+SUB Extract_Articles
+
+    TRACE Starting Extract_Articles for $(vCompany);
+
+    // --- Setup ---
+    SET vURL = '$(vu_api_base_url(articles))';
+    LET vNoOfPages = 0;
+    LET vTable = 'Inventory';
+    
+    LIB CONNECT TO '$(vConnection)';
+                
+   		 // --- Get total pages for this financial year ---
+   		 tmpMetaInfoArticles:
+   		 SQL SELECT 
+   		     "__KEY_root",
+   		     (SELECT 
+   		         "@TotalPages",
+   		         "__FK_MetaInformation"
+   		      FROM "MetaInformation" FK "__FK_MetaInformation")
+   		 FROM JSON (wrap on) "root" PK "__KEY_root"
+   		 WITH CONNECTION (
+   		     URL "$(vURL)?limit=$(vAPILimit)",
+   		     HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		 );
+			
+      
+   		 MetaInfoArticles:
+   		 LOAD
+   		     [@TotalPages] AS MaxPages
+   		 RESIDENT tmpMetaInfoArticles
+   		 WHERE NOT IsNull([__FK_MetaInformation]);
+
+   		 LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInfoArticles'),0);
+   		 TRACE Total Article pages to load: $(vNoOfPages);
+
+   		 DROP TABLE MetaInfoArticles, tmpMetaInfoArticles;
+		
+        [$(vTable)]:
+		LOAD * INLINE ´ArticleNumber´;
+        
+   		 // --- Loop through pages ---
+   		 FOR vPage = 1 TO $(vNoOfPages)
+		
+   		     TRACE Loading Articles - FY: $(vFinancialYearID), Page $(vPage) of $(vNoOfPages);
+		
+   		     RestConnectorMasterTable:
+   		     SQL SELECT 
+   		         "__KEY_root",
+   		         (SELECT "@url" FROM "Articles" FK "__FK_Articles")
+   		     FROM JSON (wrap on) "root" PK "__KEY_root"
+   		     WITH CONNECTION (
+   		         URL "$(vURL)?limit=$(vAPILimit)&page=$(vPage)",
+   		         HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		     );
+		
+   		     Article_URL:
+   		     LOAD [@url] AS URL
+   		     RESIDENT RestConnectorMasterTable
+   		     WHERE Len([@url]) > 0;
+		
+   		     DROP TABLE RestConnectorMasterTable;
+             
+//    		     // --- Extract each Article via its URL ---
+   		     FOR EACH vLoopUrl IN FieldValueList('URL')
+   		         TRACE Fetching Article from URL: $(vLoopUrl);
+   		         CALL Extract_ArticleDetails('$(vLoopUrl)');
+				 CALL CheckTokenExpired; // Refresh token if needed
+   		     NEXT
+             
+   		     DROP TABLE Article_URL;
+
+   		 NEXT  vPage
+         
+         NoConcatenate
+         Articles:
+		 Load * Resident [$(vTable)]; // Get only articles, no incremental
+        
+             // --- Store final data ---
+    	CALL store_qvd('$(vTable)');
+		CALL store_qvd('Articles');
+            
+END SUB
+
+///$tab Article Rows
+//#003
+SUB Extract_ArticleDetails(_URL)
+
+    RestConnectorMasterTable:
+    SQL 
+    SELECT 
+        "@url",
+        "ArticleNumber",
+        "Bulky",
+        "ConstructionAccount",
+        "Depth",
+        "Description",
+        "DisposableQuantity",
+        "EAN",
+        "EUAccount",
+        "EUVATAccount",
+        "ExportAccount",
+        "Height",
+        "Housework",
+        "HouseworkType",
+        "Active",
+        "Manufacturer",
+        "ManufacturerArticleNumber",
+        "Note",
+        "PurchaseAccount",
+        "PurchasePrice",
+        "QuantityInStock",
+        "ReservedQuantity",
+        "SalesAccount",
+        "StockGoods",
+        "StockPlace",
+        "StockValue",
+        "StockWarning",
+        "SupplierName",
+        "SupplierNumber",
+        "Type",
+        "Unit",
+        "VAT",
+        "WebshopArticle",
+        "Weight",
+        "Width",
+        "Expired",
+        "SalesPrice",
+        "CostCalculationMethod",
+        "StockAccount",
+        "StockChangeAccount",
+        "DirectCost",
+        "FreightCost",
+        "OtherCost",
+        "DefaultStockPoint",
+        "DefaultStockLocation"
+
+    FROM JSON (wrap off) "Article"
+     WITH CONNECTION (
+              URL "$(_URL)",
+            HTTPHEADER "Authorization" "Bearer $(vAccessToken)" );
+
+
+	Concatenate($(vTable))
+		Load
+		'$(vStartTime)' 		as lastmodify,		
+		'$(vCompany)' 			AS Company,
+        "@url",
+        "ArticleNumber",
+        "Bulky",
+        "ConstructionAccount",
+        "Depth",
+        "Description",
+        "DisposableQuantity",
+        "EAN",
+        "EUAccount",
+        "EUVATAccount",
+        "ExportAccount",
+        "Height",
+        "Housework",
+        "HouseworkType",
+        "Active",
+        "Manufacturer",
+        "ManufacturerArticleNumber",
+        "Note",
+        "PurchaseAccount",
+        "PurchasePrice",
+        "QuantityInStock",
+        "ReservedQuantity",
+        "SalesAccount",
+        "StockGoods",
+        "StockPlace",
+        "StockValue",
+        "StockWarning",
+        "SupplierName",
+        "SupplierNumber",
+        "Type",
+        "Unit",
+        "VAT",
+        "WebshopArticle",
+        "Weight",
+        "Width",
+        "Expired",
+        "SalesPrice",
+        "CostCalculationMethod",
+        "StockAccount",
+        "StockChangeAccount",
+        "DirectCost",
+        "FreightCost",
+        "OtherCost",
+        "DefaultStockLocation"
+    RESIDENT RestConnectorMasterTable;
+
+    Drop Table RestConnectorMasterTable;
+            
+    Sleep 50;		    // Rate limiting pause – avoid hitting Fortnox API limits
+
+END SUB 
+
 ///$tab -- --
 
 ///$tab Incremental QVD
 SUB Check_incremental(incrTable)
+
+// ─────────────────────────────────────────────────────────────
+// Subroutine: LoadTags
+// ─────────────────────────────────────────────────────────────
+SUB LoadTags(_path)
+    _TempTags:
+    LOAD
+        SubField(Tag, '=', 1) as TagName,
+        SubField(Tag, '=', 2) as TagValue 
+    ;
+    LOAD String%Table as Tag
+    FROM [$(_path)] 
+    (XmlSimple, table is [QvdTableHeader/TableTags/String])
+    WHERE String%Table LIKE '*=*';
+
+    FOR _i = 0 TO NoOfRows('_TempTags') - 1
+        LET _vname = 'Tag:' & Peek('TagName', _i, '_TempTags');
+        LET [$(_vname)] = Peek('TagValue', _i, '_TempTags');
+    NEXT _i
+
+    DROP TABLE _TempTags;
+    SET _vname=;
+    SET _i=;
+END SUB
 
 // ─────────────────────────────────────────────────────────────
 // Incremental Load Setup
@@ -1581,9 +2053,29 @@ LET vIncrementalMessage          = If($(vIncrementalQVDsAvailable) = 1, 'Increme
 
 
 // ─────────────────────────────────────────────────────────────
-// Determine Incremental Load Start Time
+// Full Reload Logic Based on QVD Tag
 // ─────────────────────────────────────────────────────────────
 IF $(vIncrementalQVDsAvailable) = 1 THEN
+
+    Call LoadTags('$(vIncrQVDPath)')
+    LET vLastFullReload = '$(Tag:FullReloadDate)';
+    TRACE 🔖 FullReload Tag Found: $(vLastFullReload);
+
+    IF  Today(1) - Date('$(vLastFullReload)', 'YYYY-MM-DD') >= vFullReloadFrequency THEN
+    	LET vForceFullReload = 1;
+    ELSE
+        LET vForceFullReload = 0;
+    END IF
+
+ELSE
+    LET vForceFullReload = 1;
+ENDIF
+
+
+// ─────────────────────────────────────────────────────────────
+// Determine Incremental Load Start Time
+// ─────────────────────────────────────────────────────────────
+IF $(vIncrementalQVDsAvailable) = 1 AND vForceFullReload = 0 AND vFullLoad <> 1 THEN
 
     [$(incrTable)MaxLastupdateTime]:
     LOAD
@@ -1640,6 +2132,19 @@ SUB Incremental_Load(_Table)
     END IF
 
 END SUB
+
+
+SUB AddTag(_Table)
+
+    IF $(vForceFullReload) = 1 OR $(vIncrementalQVDsAvailable) <> 1 THEN
+        TAG TABLE $(_Table) WITH 'FullReloadDate=$(vToday)';
+    ELSE
+        LET vLastFullReload = Date('$(vLastFullReload)', 'YYYY-MM-DD');
+        TAG TABLE $(_Table) WITH 'FullReloadDate=$(vLastFullReload)';
+    END IF;
+    
+END SUB
+
 ///$tab Store QVD
 SUB store_qvd(_table)
 
@@ -1795,12 +2300,18 @@ FOR i = 0 TO NoOfRows('CompanyLookup') - 1
 
     // --- Dim Data ---
     Call Execute_Sub('Extract_FinancialYears');
+    Call Execute_Sub('Extract_CostCenters');
+    Call Execute_Sub('Extract_Projects');
+    Call Execute_Sub('Extract_Accounts');
+    Call Execute_Sub('Extract_Currencies');
+    Call Execute_Sub('Extract_Customers');
 
     // --- Transaction Data ---
+    Call Execute_Sub('Extract_Vouchers');
     Call Execute_Sub('Extract_Invoices');
     Call Execute_Sub('Extract_SupplierInvoices');
-	Call Execute_Sub('Extract_Vouchers');
     Call Execute_Sub('Extract_Orders');
+    Call Execute_Sub('Extract_Articles');
 
 
 NEXT i
