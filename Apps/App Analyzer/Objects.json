@@ -1,8 +1,6 @@
 
 SHEETS
-{"qInfo":{"qId":"161492c8-9811-4bd5-89bf-0887a86f322c","qType":"sheet"},"qMeta":{"_resourcetype":"app.object","_objecttype":"sheet","id":"161492c8-9811-4bd5-89bf-0887a86f322c","approved":false,"published":true,"publishTime":"2026-03-08T10:26:15.536Z","owner":"auth0|9c175a956fe3b6462206786e43d8deb1af3f20583f3aa4419891abc395a39ba4","ownerId":"69772aff517a4d20d44eaca1","createdDate":"2026-05-09T08:07:50.456Z","modifiedDate":"2026-05-09T08:07:50.456Z","encrypted":true,"privileges":["read","publish","change_owner"],"title":"Mitt nya ark","description":""},"qData":[]}
 
 OBJECTS ON SHEETS
-{"name":"espeR","type":"table","col":0,"row":0,"colspan":22,"rowspan":12,"bounds":{"y":0,"x":0,"width":91.66666666666666,"height":100}}
 
 FIELDS
