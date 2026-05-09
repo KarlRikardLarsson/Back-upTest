@@ -16,703 +16,2211 @@
 
     CHANGE LOG
     ==============================================================================
-    Date          User              Company          Description
-    =============================================================================
-    2026-03-6	Rikard Larsson	Kolirbi,	Changed storage path and added vEnv
-    2026-03-5	Rikard Larsson	Kolirbi,	Translated to English, updated keys to Company&'|'&Key format, added Invoice transform SUB.
-    2026-03-4	Rikard Larsson	Kolirbi,	Transform Articles.
-    2026-03-3	Rikard Larsson	Kolirbi,	Created "Report Structure" excel and account transform for that.
-    2026-03-2	Rikard Larsson	Kolirbi,	Created first draft: Transform
-
+    ID		Date          User              Company          Description
+    ==============================================================================
+	#004	2026-03-03	Rikard Larsson, Kolibri   Added extract for Suppliers & Supplier invoice
+	#003	2026-03-02	Rikard Larsson, Kolibri   Added extract for Article, inventory & invoices
+	#002	2026-02-27	Rikard Larsson, Kolibri   Added extract for Customers,Accounts,CostCenter & projects
+	#001	2026-02-11	Rikard Larsson, Kolibri   Created first draft and extracting GL From Sandbox env.
     ==============================================================================
 */
-///$tab ** Config **
+
+
+
+
+///$tab ** Configuration **
 TRACE Initializing configuration and connection settings;
 
-
-// name of space where QVDS should be stored and extracted from
 SET vu_base_store_space_name_extract='D1 - Extract';
 SET vu_base_store_space_name_transform='D2 - Transform';
 
-// Sätt denna: 'True'  = ladda endast aktiva dimensioner
-//              annat  = ladda både aktiva och inaktiva dimensioner
-SET vActiveOnly = 'True';
+
+// Connection to retrieve access tokens
+SET vu_rest_connection_token = '$(vu_base_store_space_name_extract):Fortnox_Auth';
+
+// Connection used to retrieve actual data (authenticated)
+SET vu_rest_connection_data = '$(vu_base_store_space_name_extract):Fortnox_Data';
+
+// Connection to store and retrieve QVD files
+SET vu_qvd_storage_connection = 'lib://$(vu_base_store_space_name_extract):DataFiles/Fortnox';
+
+// Rest Base URL for extracting data
+LET vu_api_base_url      = 'https://api.fortnox.se/3/$1';
+
+// Company-specific setup: default start year & country code
+CompanyLookup:
+LOAD * INLINE [
+    Company        
+    QlikardsBolagNYABOLAG!!!           
+        
+];
+
+
+LET vFullLoad =0; // If=1, full reload, no incremental. But why do that? See "Extract Fortnox FULL"
+
+// Incremental vs Full Load
+LET vFullReloadFrequency     = 999999;          // Full reload frequency (e.g., every 185 days). Default 999999
+LET vu_initial_days_back         = 365 * 5;    // How far back to load for first-time full load in days (e.g., 5 years)
+LET vu_rolling_analysis_range 			= 365 * 7; // Maximum days to store data in QVDs. 7 years by default
+
+
+LET vGMToffset ='GMT+01:00'; //+1 for swedish time
+SET vTokenExpiryMarginMinutes = 5; // Refresh token if it expires within next 5 minutes
+
+SET vAPILimit =500; //?Limit in api call. 500 is max according to documentation.
 
 
 ///$tab Variables
-SUB Variables
+SET vOutputQVDName       = '$(vu_qvd_storage_connection)/$1/$2.qvd';
+SET vRefreshTokenQVDName = '$(vu_qvd_storage_connection)/Refreshtoken/RefreshTokens.qvd';
+SET vConnection          = '$(vu_rest_connection_data)';
+SET vRefreshConnection   = '$(vu_rest_connection_token)';
+LET vStartTime           = now(1);
 
-SET vQVD_Extract    = 'lib://$(vu_base_store_space_name_extract)/Fortnox/*/$1.qvd';
-SET vQVD_Transform  = 'lib://$(vu_base_store_space_name_transform)/Fortnox/$1.qvd';
-SET vQVD_Currencies = 'lib://$(vu_base_store_space_name_extract)/Riksbanken/$1.qvd';
+LET vDefaultStartYear    = Year(Today(1) - vu_initial_days_back);
+LET vRollingAnlysisDate    = Date(Today(1) - vu_rolling_analysis_range,'YYYY-MM-DD');
 
-// In personal space - RECOMENDED TO CHANGE TO CLOUD STORAGE -
-SET vXLSXfile		= 'lib://DataFiles/$1.xlsx';
-
-SET vOutputQVDName = '$(vQVD_Transform)'; // Default store location
-SET vInputQVDName  = '$(vQVD_Extract)';   // Default read location
+Let vStartTime			 = ConvertToLocalTime('$(vStartTime)','$(vGMToffset)');
 
 
-Let vActiveList = if(lower('$(vActiveOnly)')='true',
-   '''True''',
-    '''True'',''False'''
-);
 
-LET vActiveMessage = if(Lower('$(vActiveOnly)')='true',
-  'Loading ONLY active dimensions.',
-  'Loading ALL dimensions (including inactive).'
-);
 
-TRACE $(vActiveMessage);
-SET vActiveMessage=;
+
+///$tab CheckTokenExpired
+// Subroutine: Checks if the access token has expired
+SUB CheckTokenExpired
+
+    // Access tokens last 60 minutes – we'll refresh after 58 minutes
+    LET vTokenExpireLimit = 58 * 60; // seconds
+    
+	SavedTimestamp:
+	LOAD SavedTimestamp,AccessToken FROM '$(vRefreshTokenQVDName)' 
+	(qvd)
+	WHERE Company ='$(vCompany)';
+	
+    LET vSavedTimestamp =Peek('SavedTimestamp', 0, 'SavedTimestamp');
+    
+	// Read current time and token expiry
+	LET vNow = Timestamp(ConvertToLocalTime(now(1),'$(vGMToffset)')); 
+
+	// Calculate difference (in minutes)
+	LET vMinutesLeft = Round((alt(vSavedTimestamp,vNow) - vNow) * 24 * 60); // If null, vMinutesLeft = now()
+
+
+	// Trace current situation
+	TRACE 🕑 Token Expires In: $(vMinutesLeft) minutes (Margin: $(vTokenExpiryMarginMinutes) minutes);
+	
+	// Decision logic
+	IF vMinutesLeft <= vTokenExpiryMarginMinutes THEN
+	
+	    TRACE 🔄 Token is about to expire (or expired)! Requesting new token...;
+	        
+	        DISCONNECT;
+	
+	        CALL UpdateTokens('$(vCompany)');
+	
+	        LIB CONNECT TO '$(vConnection)';
+	ELSE
+	    TRACE ✅ Current token is still valid. No need to refresh.;
+    	LET vAccessToken =Peek('AccessToken', 0, 'SavedTimestamp');
+        
+	ENDIF
+    
+	DROP TABLE SavedTimestamp;
 
 END SUB
 
-///$tab Artiklar
-SUB Load_DIM_Artiklar
-    // ----------------------------------------------------------------
-    // DIM: Artiklar
-    // ----------------------------------------------------------------
-    DIM_Artiklar:
-    LOAD
-        Company & '|' & ArticleNumber               AS %Key_Artikel,
-        ArticleNumber                               AS ArtikelNummer,
-        ArticleNumber & ' ' & Description           AS Artikel,
-        Depth                                       AS Djup,
-        EAN,
-        ExportAccount                               AS ExportKonto,
-        Manufacturer                                AS Tillverkare,
-        Note                                        AS Anteckning,
-        PurchaseAccount                             AS InköpsKonto,
-        PurchasePrice                               AS InköpsPris,
-        SalesAccount                                AS FörsäljningsKonto,
-        SupplierName                                AS LeverantörNamn
-    FROM '$(vInputQVDName(Articles))' (qvd);
-    
-    // ----------------------------------------------------------------
-    // Mappning: Artikel → Inköpspris (baspris från Artiklar)
-    // ----------------------------------------------------------------
-    Map_Artikel_InköpsPris:
-    MAPPING LOAD
-        %Key_Artikel,
-        InköpsPris
-    RESIDENT DIM_Artiklar;
-    
-    // ----------------------------------------------------------------
-    // Långsamt föränderlig dimension: Inköpspris från Lager -> Inkluderar datum
-    // ----------------------------------------------------------------
-    Tmp_Artiklar_Pris:
-    LOAD
+///$tab UpdateTokens
+// Updates the refresh token and retrieves a new access token for the specified company
+SUB UpdateTokens(vCompany)
+
+    Trace Updating tokens for company $(vCompany);
+    LET qvd_name = '$(vRefreshTokenQVDName)';
+
+    // Load existing refresh tokens from QVD
+    Refreshtokens_full:
+    NoConcatenate
+    LOAD 
         Company,
-        ArticleNumber,
-        PurchasePrice,
-        lastmodify
-    FROM '$(vInputQVDName(Inventory))' (qvd);
+        RefreshToken,
+        AccessToken,
+        SavedTimestamp
+    FROM '$(qvd_name)'(qvd);
+	
+    // Get the refresh token for the specified company
+    LET vInputRefreshToken = lookup('RefreshToken', 'Company', '$(vCompany)', 'Refreshtokens_full');
+
+    TRACE Making token request using refresh token: $(vInputRefreshToken);
+
+    LIB CONNECT TO '$(vRefreshConnection)';
+
+    // Send token refresh request to Fortnox API
+    RestConnectorMasterTable:
+    SQL SELECT 
+        "refresh_token",
+        "access_token",
+        "__KEY_root"
+    FROM JSON (wrap on) "root" PK "__KEY_root"
+    WITH CONNECTION (
+        BODY "grant_type=refresh_token&refresh_token=$(vInputRefreshToken)"
+    );
+
     
-    Map_ArtikelDatum_InköpsPris:
-    Mapping LOAD
-        Company & '|' & ArticleNumber & '|' & Num(Floor(lastmodify)) AS %Key_ArtikelDatum,
-        PurchasePrice
-    RESIDENT Tmp_Artiklar_Pris;
-    DROP TABLE Tmp_Artiklar_Pris;
-    DROP FIELD InköpsPris FROM DIM_Artiklar;
+    // Extract new tokens from response
+    LET vOutputRefreshToken = peek('refresh_token', 0, 'RestConnectorMasterTable');
+    LET vAccessToken        = peek('access_token', 0, 'RestConnectorMasterTable');
+
+    DROP TABLE RestConnectorMasterTable;
+
+
     
+    RefreshToken:
+    NoConcatenate
+    LOAD 
+        '$(vCompany)' as Company, 
+        '$(vOutputRefreshToken)' AS RefreshToken,
+        '$(vAccessToken)' 		AS AccessToken,
+         ConvertToLocalTime(now(1) + 1/24, '$(vGMToffset)') AS SavedTimestamp // adding one hour to get exipre time
+    AutoGenerate (1)
+	;
     
-    CALL Store_QVD('DIM_Artiklar')
+    // Create updated entry for the current company
+    Concatenate(RefreshToken)
+    Load *
+    RESIDENT Refreshtokens_full
+    WHERE Company <> '$(vCompany)';
+
+    DROP TABLE Refreshtokens_full;
+
+    // Save updated token list back to QVD
+    Store RefreshToken INTO '$(qvd_name)' (qvd);
+	DROP TABLE RefreshToken;
+    
+    TRACE Disconnecting from token refresh service;
+    DISCONNECT;
     
 END SUB
-///$tab Faktura
-SUB Load_FCT_Faktura
 
-// =======================
-// RAW LOAD
-// =======================
-TMP_Faktura_Raw:
-LOAD
-    Company,
-    DocumentNumber,
-    CustomerNumber,
-    InvoiceDate,
-    DueDate,
-    Credit,
-    FinalPayDate,
-    InvoiceType,
-    AccountNumber,
-    ArticleNumber,
-    CostCenter,
-    Project,
-    DeliveredQuantity,
-    Discount,
-    VAT,
-    Description,
-    Price,
-    Freight,
-    RowId
-FROM '$(vInputQVDName(Invoices))' (qvd);
 
-// =======================
-// TRANSFORMERING (RESIDENT)
-// =======================
-FCT_Faktura:
-NOCONCATENATE
-LOAD
-    // ---------- Nycklar ----------
-    Company & '|' & Text(CustomerNumber)                        AS %Key_Kund,
-    Company & '|' & Text(ArticleNumber)                         AS %Key_Artikel,
-    Company & '|' & Num(AccountNumber, '0000')                  AS %Key_Konto,
-    Company & '|' & Trim(CostCenter)                            AS %Key_KostnadsStälle,
-    Company & '|' & Project                                     AS %Key_Projekt,
-    Company & '|' & Text(ArticleNumber) & '|' & Text(RowId)     AS FakturaRad,
-    // ---------- Dimensioner ----------
-    DocumentNumber                                              AS FakturaNr,
-    Date(Floor(InvoiceDate))                                    AS FakturaDatum,
-    Date(Floor(DueDate))                                        AS FörfalloDatum,
-    If(Credit = 'True', 1, 0)                                   AS Kredit,
-    InvoiceType                                                 AS FakturaTyp,
-    AccountNumber                                               AS KontoNummer,
-    Freight                                                     AS Frakt,
-    FinalPayDate                                                AS SlutBetalDatum,
-    Company														AS Företag,
-    Description													AS Beskrivning,
-    
-    // ---------- Mått ----------
-    DeliveredQuantity                                           AS LeveransAntal,
-    Price                                                       AS Pris,
-    Discount                                                    AS Rabatt,
-    VAT                                                         AS Moms,
-    DeliveredQuantity * ApplyMap('Map_ArtikelDatum_InköpsPris', Company & '|' & ArticleNumber & '|' & Num(Floor(InvoiceDate)), ApplyMap('Map_Artikel_InköpsPris', Company & '|' & ArticleNumber, 0)) AS InköpsPris,
-    (DeliveredQuantity * Price)                                 AS Försäljningsbelopp,
-    
-    // ---------- Info/Övrigt ----------
-    'Invoice Fortnox'                                           AS Källa
-RESIDENT TMP_Faktura_Raw;
 
-DROP TABLE TMP_Faktura_Raw;
+///$tab --- DIM --
 
-Left join(FCT_Faktura)
-LOAD
-    FakturaRad,
-    (Försäljningsbelopp - InköpsPris)                           AS Täckningsbidrag
-RESIDENT FCT_Faktura;
-
-DROP MAPPING TABLES Map_ArtikelDatum_InköpsPris, Map_Artikel_InköpsPris;
-
-CALL Store_QVD('FCT_Faktura')
-
-END SUB
-///$tab Huvudbok
-SUB Load_FCT_Huvudbok
-
-// =======================
-// RAW LOAD
-// =======================
-TMP_Verifikat_Raw:
-LOAD
-    Company,
-    AccountNo,
-    VoucherSeries,
-    VoucherNumber,
-    CostCenter,
-    Project,
-    Description,
-    Credit,
-    @url,
-    Debit,
-    TransactionInformation,
-    Year,
-    Description_u0,
-    TransactionDate,
-    Removed
-FROM '$(vInputQVDName(Vouchers))' (qvd);
-
-// =======================
-// TRANSFORMERING (RESIDENT)
-// =======================
-TRANS_Verifikat_TMP:
-NOCONCATENATE
-LOAD
-    // ---------- Nycklar ----------
-    Company & '|' & Num(AccountNo, '0000')    AS %Key_Konto,
-    Company & '|' & Project                   AS %Key_Projekt,
-    Company & '|' & Trim(CostCenter)          AS %Key_KostnadsStälle,
-    Company & '|' & Year                      AS %Key_RäkenskapsÅr,
-
-    // ---------- Dimensioner ----------
-    Company									  AS Företag,
-    Text(VoucherSeries) & Text(VoucherNumber) AS VerifikatSerieNummer,
-    VoucherNumber                             AS VerifikatNummer,
-    Text(VoucherSeries)                       AS VerifikatSerie,
-    Description                               AS VerifikatBeskrivning,
-    TransactionInformation					  AS TransaktionsInformation,
-    Description_u0,
-    
-    // Datum
-    Date(Floor(TransactionDate))              AS BokföringsDatum,
-    Floor(MonthStart(Floor(TransactionDate))) AS PeriodNr,
-    Date(MonthStart(Floor(TransactionDate)))  AS Period,
-
-    // Belopp
-    RangeSum(Credit, -Debit)                  AS Belopp_SEK,
-
-    // Status
-    If(Removed = 'True', 1, 0)               AS ÄrBortagen,
-
-    // Kontoklass (1–8)
-    Left(Trim(AccountNo), 1)                  AS KontoKlass
-
-RESIDENT TMP_Verifikat_Raw;
-
-DROP TABLE TMP_Verifikat_Raw;
-
-// =======================
-// BALANSRÖRELSER (klass 1–2), per Konto+Projekt+KostnadsStälle+RäkenskapsÅr
-// =======================
-RörelserPerPeriod:
-LOAD
-    %Key_Konto,
-    %Key_Projekt,
-    %Key_KostnadsStälle,
-    %Key_RäkenskapsÅr,
-    Företag,
-    PeriodNr,
-    Sum(Belopp_SEK) AS Rörelse_SEK
-RESIDENT TRANS_Verifikat_TMP
-WHERE ÄrBortagen = 0 AND Match(KontoKlass, '1', '2')
-AND PeriodNr <= Floor(MonthStart(Today(0)))
-GROUP BY %Key_Konto, %Key_Projekt, %Key_KostnadsStälle, %Key_RäkenskapsÅr, Företag, PeriodNr;
-
-// ---- Min..Idag per nyckelkombination ----
-MinMax_TillIdag:
-LOAD
-    %Key_Konto,
-    %Key_Projekt,
-    %Key_KostnadsStälle,
-    %Key_RäkenskapsÅr,
-    Företag,
-    Min(PeriodNr)               AS FrånP,
-    Floor(MonthStart(Today(0))) AS TillP
-RESIDENT RörelserPerPeriod
-GROUP BY %Key_Konto, %Key_Projekt, %Key_KostnadsStälle, %Key_RäkenskapsÅr, Företag;
-
-// ---- Befintliga sammansatta nycklar (för NOT EXISTS) ----
-BefintligaBalPer:
-LOAD DISTINCT
-    AutoNumberHash128(%Key_Konto, %Key_Projekt, %Key_KostnadsStälle, %Key_RäkenskapsÅr, PeriodNr) AS %Key_BalPer
-RESIDENT RörelserPerPeriod;
-
-// ---- Fyll saknade månader med 0-rader ----
-CONCATENATE (RörelserPerPeriod)
-LOAD
-    %Key_Konto,
-    %Key_Projekt,
-    %Key_KostnadsStälle,
-    %Key_RäkenskapsÅr,
-    Företag,
-    GenP      AS PeriodNr,
-    0         AS Rörelse_SEK
-WHERE NOT Exists(%Key_BalPer,
-         AutoNumberHash128(%Key_Konto, %Key_Projekt, %Key_KostnadsStälle, %Key_RäkenskapsÅr, GenP));
-LOAD
-    %Key_Konto,
-    %Key_Projekt,
-    %Key_KostnadsStälle,
-    %Key_RäkenskapsÅr,
-    Företag,
-    AddMonths(FrånP, IterNo()-1) AS GenP
-RESIDENT MinMax_TillIdag
-WHILE AddMonths(FrånP, IterNo()-1) <= TillP;
-
-DROP TABLE BefintligaBalPer, MinMax_TillIdag;
-
-// ---- Normalisera ----
-RörelserPerPeriod_Full:
-NOCONCATENATE
-LOAD
-    %Key_Konto,
-    %Key_Projekt,
-    %Key_KostnadsStälle,
-    %Key_RäkenskapsÅr,
-    Företag,
-    PeriodNr,
-    Sum(Rörelse_SEK) AS Rörelse_SEK
-RESIDENT RörelserPerPeriod
-GROUP BY %Key_Konto, %Key_Projekt, %Key_KostnadsStälle, %Key_RäkenskapsÅr, Företag, PeriodNr
-ORDER BY %Key_Konto, %Key_Projekt, %Key_KostnadsStälle, %Key_RäkenskapsÅr, Företag, PeriodNr;
-
-DROP TABLE RörelserPerPeriod;
-
-// =======================
-// INGÅENDE / UTGÅENDE BALANS
-// =======================
-FCT_Huvudbok:
-NOCONCATENATE
-LOAD *,
-    // UB = IB + Rörelse
-    RangeSum(IngåendeBalans_SEK, Rörelse_SEK) AS UtgåendeBalans_SEK;
-LOAD
-    %Key_Konto,
-    %Key_Projekt,
-    %Key_KostnadsStälle,
-    %Key_RäkenskapsÅr,
-    Företag,
-    'BR|' & MonthStart(PeriodNr)  AS Period,
-    PeriodNr,
-
-    // IB = föregående periods UB för samma nyckelkombination
-    If(
-        Previous(%Key_Konto)           = %Key_Konto           AND
-        Previous(%Key_Projekt)         = %Key_Projekt         AND
-        Previous(%Key_KostnadsStälle)  = %Key_KostnadsStälle  AND
-        Previous(%Key_RäkenskapsÅr)    = %Key_RäkenskapsÅr    AND
-        Previous(Företag)              = Företag,
-        Peek('UtgåendeBalans_SEK'),
-        0
-    )                              AS IngåendeBalans_SEK,
-
-    Rörelse_SEK,
-    'BALANS'                       AS RapportTyp,
-    'Ledger Fortnox'               AS Källa
-RESIDENT RörelserPerPeriod_Full
-// Sortering: alla nycklar först, sedan PeriodNr
-ORDER BY
-    %Key_Konto,
-    %Key_Projekt,
-    %Key_KostnadsStälle,
-    %Key_RäkenskapsÅr,
-    Företag,
-    PeriodNr;
-
-DROP TABLE RörelserPerPeriod_Full;
-
-// =======================
-// RESULTATRÄKNING (klass 3–8)
-// =======================
-Concatenate(FCT_Huvudbok)
-LOAD
-    *,
-    'RESULTAT'       AS RapportTyp,
-    'Ledger Fortnox' AS Källa
-RESIDENT TRANS_Verifikat_TMP
-WHERE ÄrBortagen = 0 AND Match(KontoKlass, '3', '4', '5', '6', '7', '8')
-AND PeriodNr <= Floor(MonthStart(Today(0)));
-;
-
-DROP TABLE TRANS_Verifikat_TMP;
-DROP FIELD PeriodNr;
-
-CALL Store_QVD('FCT_Huvudbok')
-
-END SUB
-///$tab Konto
-SUB Load_DIM_Konto
-
-SET vIndentNbspCount = 5; // antal icke-brytande mellanslag för indragning
-
-SET vNormalFärg  = #FFFFFF;
-SET vMellanFärg  = #F2F2F2;
-SET vFetFärg     = #C9B8CC;
-SET vKursivFärg  = #EDE6EF;
-
-DIM_Konto:
-LOAD
-    // Nyckel (kort & tydlig). Behåll Company i nyckeln för att undvika krockar mellan bolag.
-    Company & '|' & Num(Number, '0000')              AS %Key_Konto,
-
-    // Naturliga attribut
-    Num(Number, '0000')                              AS KontoNr,
-    Description                                      AS KontoNamn,
-    Num(Number, '0000') & ' - ' & Description        AS Konto,
-
-    // Status (normaliserat bool till 0/1)
-    If(Active = 'True', 1, 0)                        AS Konto_Aktiv,
-
-    // SRU-kod för konto
-    SRU                                              AS SRU_Konto
-
-FROM '$(vInputQVDName(Accounts))' (qvd)
-WHERE Match(Active, $(vActiveList));
-
-
-// Förklaring av "KontoIntervall"-format:
-// Du kan definiera kontointervall med ett bindestreck, t.ex. 5000-5999.
-// För specifika konton, separera med semikolon, t.ex. 7830;7831.
-// Blanda inte intervall och enskilda konton i samma cell.
-
-RapportStruktur:
-LOAD
-    RowNo()              AS SortOrder,
-    'RR' & RadID         AS RadID,
-    'RR' & OverordnadRadID AS ÖverordnadRadID,
-    RadBeskrivning       AS RadBeskrivning,
-    KontoIntervall       AS KontoIntervall,
-    Stil                 AS Stil,
-    Procentrad           AS Procentrad
-FROM '$(vXLSXfile(ReportStructure))' 
-(ooxml, embedded labels, table is Resultaträkning);
-
-
-Concatenate(RapportStruktur)
-LOAD
-    RowNo()              AS SortOrder,
-    'BR' & RadID         AS RadID,
-    'BR' & OverordnadRadID AS ÖverordnadRadID,
-    RadBeskrivning       AS RadBeskrivning,
-    KontoIntervall       AS KontoIntervall,
-    Stil                 AS Stil,
-    Procentrad           AS Procentrad
-FROM '$(vXLSXfile(ReportStructure))' 
-(ooxml, embedded labels, table is Balansräkning);
-
-KontoIntervallPoster:
-LOAD RadID AS RadNyckel,
-    Num(SubField(KontoPost, '-', 1)) AS FrånKonto,
-    Num(
-        If(Index(KontoPost, '-') > 0,
-            SubField(KontoPost, '-', 2),
-            SubField(KontoPost, '-', 1)
-        )
-    ) AS TillKonto;
-LOAD
-    RadID,
-    SubField(KontoIntervall, ';') AS KontoPost
-RESIDENT RapportStruktur
-WHERE Len(Trim(KontoIntervall)) > 0;
-
-// --------------------------------------------------
-// Bygg hierarkikarta: kopplar varje rad till sina föräldrarader
-// --------------------------------------------------
-HierarkiKarta:
-HierarchyBelongsTo (RadID, ÖverordnadRadID, RadBeskrivning, FörälderRubrikID, FörälderRubrik, NivåDjup)
-LOAD
-    RadID,
-    ÖverordnadRadID,
-    RadBeskrivning
-RESIDENT RapportStruktur;
-
-
-// --------------------------------------------------
-// Koppla kontointervall till varje rad i hela hierarkin
-// --------------------------------------------------
-LEFT JOIN (HierarkiKarta)
-LOAD
-    RadNyckel AS RadID,
-    FrånKonto,
-    TillKonto
-RESIDENT KontoIntervallPoster;
-
-// --------------------------------------------------
-// Bygg tabell med varje rad och dess kontointervall
-// --------------------------------------------------
-RapportRadKontoKarta_Tmp:
-LOAD
-    FörälderRubrikID AS RadID,
-    FrånKonto,
-    TillKonto,
-    NivåDjup
-RESIDENT HierarkiKarta
-WHERE NOT IsNull(FrånKonto) AND NOT IsNull(TillKonto);
-
-// --------------------------------------------------
-// Lägg till RadBeskrivning till varje rad för kontext
-// --------------------------------------------------
-JOIN (RapportRadKontoKarta_Tmp)
-LOAD
-    RadID,
-    RadBeskrivning
-RESIDENT RapportStruktur;
-
-// --------------------------------------------------
-// Matcha transaktioner mot rapportrader baserat på kontonummer
-// --------------------------------------------------
-LEFT JOIN (RapportRadKontoKarta_Tmp)
-IntervalMatch (KontoNr)
-LOAD
-    FrånKonto,
-    TillKonto
-RESIDENT RapportRadKontoKarta_Tmp;
-
-// --------------------------------------------------
-// Lägg till sorteringsordning och visuell stil från rapportradsdefinition
-// --------------------------------------------------
-JOIN (RapportRadKontoKarta_Tmp)
-LOAD
-    RadBeskrivning,
-    SortOrder,
-    Stil,
-    Procentrad
-RESIDENT RapportStruktur;
-
-// --------------------------------------------------
-// Rensa temporära tabeller
-// --------------------------------------------------
-DROP TABLE KontoIntervallPoster, RapportStruktur, HierarkiKarta;
-
-RapportRadKontoKarta:
-LOAD DISTINCT
-    KontoNr,
-    RadID,
-    If(Stil = 'Normal', Text(Repeat(Chr(160), $(vIndentNbspCount)) & RadBeskrivning), Coalesce(RadBeskrivning, ' ')) AS RadBeskrivning,
-    SortOrder,
-    NivåDjup,
-    Procentrad,
-
-    If(IsNull(Stil) OR Len(Trim(Stil)) = 0,
-        '$(vMellanFärg)',          // Tomma/avdelare rader → ljusgrå, förhindrar kollaps
-      If(Stil = 'Normal',
-        '$(vNormalFärg)',          // Vit
-        If(Stil = 'Fet',
-          '$(vFetFärg)',           // Malva #C9B8CC
-          If(Stil = 'Kursiv',
-            '$(vKursivFärg)',      // Lavendel #EDE6EF
-            '$(vMellanFärg)'      // Fallback
-          )
-        )
-      )
-    ) AS Färg,
-
-    If(Stil = 'Normal', null(),
-      If(Stil = 'Fet', ' <B>',
-        If(Stil = 'Kursiv', '<I>',
-    Null()))) AS Stil
-
-RESIDENT RapportRadKontoKarta_Tmp
-WHERE NOT IsNull(SortOrder);  
-
-DROP TABLE RapportRadKontoKarta_Tmp;
-
-SET vIndentNbspCount =;
-
-LEFT JOIN (RapportRadKontoKarta)
-LOAD
-    SortOrder,
-    Dual(RadBeskrivning, SortOrder) AS RadBeskrivningUnik
-RESIDENT RapportRadKontoKarta;
-
-DROP FIELDS SortOrder, RadBeskrivning;
-RENAME FIELD RadBeskrivningUnik TO RadBeskrivning;
-
-
-
-CALL Store_QVD('RapportRadKontoKarta')
-CALL Store_QVD('DIM_Konto')
-
-END SUB
-///$tab Projekt
-SUB Load_DIM_Projekt
-
-tmpProjekt:
-LOAD *
-FROM '$(vInputQVDName(Projects))' (qvd);
-
-// Mappningstabell för projektstatus
-MapProjektStatus:
-MAPPING LOAD * INLINE [
-Key, Value
-NOTSTARTED, Ej påbörjad
-ONGOING, Pågående
-COMPLETED, Avslutad
-];
-
-DIM_Projekt:
-LOAD
-    Company & '|' & Trim(ProjectNumber)              AS %Key_Projekt,
-    Trim(ProjectNumber)                              AS ProjektNr,
-    Description                                      AS ProjektNamn,
-    Trim(ProjectNumber) & ' - ' & Description        AS Projekt,
-    
-    // Svensk etikett via ApplyMap mot mappningstabell
-    ApplyMap('MapProjektStatus', Upper(Trim(Status))) AS ProjektStatus,
-    
-    // Datum (numeriska + visningsfält)
-    Floor(StartDate)                                  AS ProjektStartNr,
-    Date(Floor(StartDate))                            AS ProjektStart,
-    Floor(EndDate)                                    AS ProjektSlutNr,
-    Date(Floor(EndDate))                              AS ProjektSlut
-RESIDENT tmpProjekt
-WHERE Len(Trim(ProjectNumber)) > 0;
-
-DROP TABLE tmpProjekt;
-
-
-CALL Store_QVD('DIM_Projekt')
-
-END SUB
-///$tab Customers
-SUB Load_DIM_Kunder
-
-DIM_Kunder:
-LOAD
-    Company & '|' & CustomerNumber                    AS %Key_Kund,
-    CustomerNumber & ' - ' & Name                     AS Kund,
-    CustomerNumber                                    AS KundNummer,
-    Name                                              AS KundNamn,
-    Address1                                          AS Adress1,
-    Address2                                          AS Adress2,
-    City                                              AS Stad,
-    ZipCode                                           AS PostNummer
-FROM '$(vInputQVDName(Customers))' (qvd);
-
-
-CALL Store_QVD('DIM_Kunder')
-
-END SUB
-///$tab Kostnadsstället
-SUB Load_DIM_KostnadsStälle
-
-DIM_KostnadsStälle:
-LOAD
-    // Nyckel (kort & säker över flera bolag)
-    Company & '|' & Trim(Code)                       AS %Key_KostnadsStälle,
-    Trim(Code)                                       AS KostnadsStälleKod,
-    Description                                      AS KostnadsStälleNamn,
-    Trim(Code) & ' - ' & Description                 AS KostnadsStälle,
-    // Status som 0/1 istället för True/False
-    If(Active = 'True' OR Active = 1, 1, 0)          AS KostnadsStälle_Aktiv
-FROM '$(vInputQVDName(CostCenters))' (qvd)
-WHERE Match(Active, $(vActiveList));
-
-CALL Store_QVD('DIM_KostnadsStälle')
-
-END SUB
 ///$tab Currencies
-SUB Load_FX_Valutor
+SUB Extract_Currencies
 
-FX_Daglig:
-LOAD
-    Currency                                         AS Valuta,
-    %DateKey                                         AS Period,
-    CurrencyFactor                                   AS ValutaFaktor
-FROM '$(vQVD_Currencies(Valutor_Riksbanken))' (qvd);
+    // Store the minimum start year as a date
+    LET vMinStartYear = makedate('$(vDefaultStartYear)');
 
-Concatenate(FX_Daglig)
-LOAD
-    Valuta,
-    'BR|' & MonthStart(Period)                       AS Period,
-    Date(MonthStart(Period),'YYYYMM') 				 AS MonthID,    // e.g. 202503 for March 2025
-    Avg(ValutaFaktor)                                AS FX_Snitt,  // Resultaträkning (genomsnittskurs)
-    FirstSortedValue(ValutaFaktor, -Period)          AS FX_ULM     // Balansräkning (ultimo-kurs)
-RESIDENT FX_Daglig
-WHERE Exists(Valuta)
-GROUP BY Valuta, MonthStart(Period);
+    // Load currencies from API -> Used for riksbank extract.
+    SET vURL = '$(vu_api_base_url(currencies))';
+    LET vTable = 'Currencies';
+    
+    LET vIncrCurrencyQVD             	 = '$(vOutputQVDName($(vCompany),$(vTable)))';
+	LET vIncrementalCurrenciessAvailable    = If(Len(FileTime('$(vIncrCurrencyQVD)')) > 0, 1, 0);
 
-CALL Store_QVD('FX_Daglig')
+    If $(vIncrementalCurrenciessAvailable) =1 THEN
+        [DefaultStartYear]:
+    LOAD
+        Min(StartDate) AS DefaultStartYear
+    FROM '$(vIncrCurrencyQVD)' (qvd);
+    
+    LET vMinStartYear = Date(Peek('DefaultStartYear',0,'DefaultStartYear'),'$(DateFormat)');
+    
+    DROP TABLE DefaultStartYear;
+    
+    ELSE 
+    
+        // Store the minimum start year as a date
+    	LET vMinStartYear = makedate('$(vDefaultStartYear)');
+        
+    END IF
+    
+    LIB CONNECT TO '$(vConnection)';
+
+	RestConnectorMasterTable:
+	SQL SELECT 
+		"__KEY_root",
+		(SELECT 
+			"Code",
+			"__FK_Currencies"
+		FROM "Currencies" FK "__FK_Currencies")
+	FROM JSON (wrap on) "root" PK "__KEY_root"
+	    WITH CONNECTION (
+	        URL "$(vURL)",
+	        HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+	    );
+
+    // Load and tag currency codes with the minimum start year 
+    [$(vTable)]:
+    NoConcatenate
+    LOAD    
+        [Code],
+        '$(vMinStartYear)' AS StartDate
+    RESIDENT RestConnectorMasterTable
+    WHERE NOT IsNull([__FK_Currencies]);
+    
+    DROP TABLE RestConnectorMasterTable;
+	
+    // Store to QVD
+    CALL store_qvd('$(vTable)');
 
 END SUB
-///$tab Financial Year
-SUB Load_DIM_FinancialYear
 
-DIM_FinancialYear:
-LOAD
-    Company & '|' & Id                               AS %Key_FinancialYear,
-    Year(FromDate) & '-' & Year(ToDate)              AS Räkenskapsår,
-    Id                                               AS RäkenskapsårID
-FROM '$(vInputQVDName(FinancialYearInfo))' (qvd);
 
-CALL Store_QVD('DIM_FinancialYear')
+
+
+
+
+
+///$tab Financial Years
+SUB Extract_FinancialYears
+
+    TRACE Extracting Financial Years for $(vCompany);       
+    
+    // Set up
+	SET vURL = '$(vu_api_base_url(financialyears))';
+    LET vTable = 'FinancialYearInfo';
+
+	LIB CONNECT TO '$(vConnection)';
+    
+    // Fetch Financial Years data from Fortnox API
+    RestConnectorMasterTable:
+    SQL SELECT 
+        "@url",
+        "FromDate",
+        "ToDate",
+        "Id"
+    FROM JSON (wrap off) "FinancialYears" PK "__KEY_FinancialYears"
+    WITH CONNECTION (
+        URL "$(vURL)",
+        HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+    );
+
+	// Filter and structure the data
+    [$(vTable)]:
+    LOAD	
+        '$(vCompany)' AS Company,
+        [Id],
+        [FromDate],		
+        [ToDate]
+    RESIDENT RestConnectorMasterTable
+    WHERE left(FromDate, 4) >= ($(vDefaultStartYear))
+    Order by Id ASC; 
+
+	// Clean up
+    DROP TABLE RestConnectorMasterTable;
+    
+    // --- Build variable list of all Financial Year IDs ---
+	LET vAllFinancialYears = '';
+	FOR Fy = 0 TO NoOfRows('$(vTable)') - 1
+	    LET vThisYear = Peek('Id', $(Fy), '$(vTable)');
+	    LET vAllFinancialYears = if(len(trim('$(vAllFinancialYears)')) = 0, chr(39) & vThisYear & chr(39), '$(vAllFinancialYears)' & ',' & chr(39) & vThisYear & chr(39));
+	NEXT Fy
+
+	// Store to QVD
+    CALL store_qvd('$(vTable)');
+
+END SUB // Extract.FinancialYears
+
+
+///$tab Customers
+//#002
+SUB Extract_Customers
+
+    TRACE Extracting Customers for $(vCompany);
+
+    // --- Setup ---
+    SET vURL = '$(vu_api_base_url(customers))?limit=$(vAPILimit)';
+    SET vNoOfPages = 0;
+    LET vTable ='Customers';
+
+    LIB CONNECT TO '$(vConnection)';
+
+    // --- Get MetaInformation (e.g. total pages to fetch) ---
+    tmpMetaInformation:
+    SQL SELECT 
+        "__KEY_root",
+        (SELECT 
+            "@TotalResources",
+            "@TotalPages",
+            "@CurrentPage",
+            "__FK_MetaInformation"
+         FROM "MetaInformation" FK "__FK_MetaInformation")
+    FROM JSON (wrap on) "root" PK "__KEY_root"
+    WITH CONNECTION (
+        URL "$(vURL)",
+        HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+    );
+
+    MetaInformation:
+    LOAD
+        [@TotalPages] AS MaxPages
+    RESIDENT tmpMetaInformation
+    WHERE NOT IsNull([__FK_MetaInformation]);
+    
+
+    // Get number of pages from loaded metadata
+    LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInformation'),0);
+
+    // Clean up temporary tables
+    DROP TABLE tmpMetaInformation, MetaInformation;
+
+    TRACE Customers - Total Pages to Load: $(vNoOfPages);
+
+    // --- Loop over pages to extract customer data ---
+    FOR vPage = 1 TO $(vNoOfPages)
+
+        TRACE Loading Customer Page $(vPage);
+
+        RestConnectorMasterTable:
+        SQL 
+        SELECT 
+            "__KEY_root",
+            (SELECT 
+                "@url",
+                "Address1",
+                "Address2",
+                "City",
+                "CustomerNumber",
+                "Email",
+                "Name",
+                "OrganisationNumber",
+                "Phone",
+                "ZipCode",
+                "__FK_Customers"
+             FROM "Customers" FK "__FK_Customers")
+        FROM JSON (wrap on) "root" PK "__KEY_root"
+        WITH CONNECTION (
+            URL "$(vURL)&page=$(vPage)",
+            HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+        );
+
+        [$(vTable)]:
+        LOAD
+            [@url],
+            '$(vCompany)' AS Company,
+            [Address1],
+            [Address2],
+            [City],
+            [CustomerNumber],
+            [Email],
+            [Name],
+            [OrganisationNumber],
+            [Phone],
+            [ZipCode],
+            [__FK_Customers] AS [__KEY_root]
+        RESIDENT RestConnectorMasterTable
+        WHERE NOT IsNull([__FK_Customers]);
+
+        // Clean up for next iteration
+        DROP TABLE RestConnectorMasterTable;
+
+		Sleep 50;
+        
+    NEXT vPage
+
+    // --- Store final data ---
+    CALL store_qvd('$(vTable)');
+    
+END SUB // Extract_Customers
+
+///$tab Accounts
+//#002
+SUB Extract_Accounts
+
+    TRACE Starting Extract_Accounts for $(vCompany);
+
+    // --- Setup ---
+    SET vURL = '$(vu_api_base_url(accounts))?limit=$(vAPILimit)';
+    SET vNoOfPages = 0;
+    LET vTable ='Accounts';
+
+    LIB CONNECT TO '$(vConnection)';
+
+    // --- Get MetaInformation (e.g. total pages to fetch) ---
+    tmpMetaInformation:
+    SQL SELECT 
+        "__KEY_root",
+        (SELECT 
+            "@TotalResources",
+            "@TotalPages",
+            "@CurrentPage",
+            "__FK_MetaInformation"
+         FROM "MetaInformation" FK "__FK_MetaInformation")
+    FROM JSON (wrap on) "root" PK "__KEY_root"
+    WITH CONNECTION (
+        URL "$(vURL)",
+        HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+    );
+
+    MetaInformation:
+    LOAD
+        [@TotalPages] AS MaxPages
+    RESIDENT tmpMetaInformation
+    WHERE NOT IsNull([__FK_MetaInformation]);
+    
+
+    // Get number of pages from loaded metadata
+    LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInformation'),0);
+
+    // Clean up temporary tables
+    DROP TABLE tmpMetaInformation, MetaInformation;
+
+    TRACE Accounts - Total Pages to Load: $(vNoOfPages);
+
+    // --- Loop over pages to extract Account data ---
+    FOR vPage = 1 TO $(vNoOfPages)
+
+        TRACE Loading Accounts Page $(vPage);
+         RestConnectorMasterTable:
+            SQL SELECT 
+                "__KEY_root",
+                (SELECT 
+                    "@url",
+                    "Active",
+                    "BalanceBroughtForward",
+                    "CostCenter",
+                    "CostCenterSettings",
+                    "Description",
+                    "Number",
+                    "Project",
+                    "ProjectSettings",
+                    "SRU",
+                    "Year",
+                    "VATCode",
+                    "__FK_Accounts"
+                 FROM "Accounts" FK "__FK_Accounts")
+            FROM JSON (wrap on) "root" PK "__KEY_root"
+            WITH CONNECTION (
+                URL "$(vURL)&page=$(vPage)",
+                HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+            );
+
+            [$(vTable)]:
+            LOAD
+                [@url],
+                '$(vCompany)' AS Company,
+                [Active],
+                [BalanceBroughtForward],
+                [CostCenter],
+                [CostCenterSettings],
+                [Description],
+                [Number],
+                [Project],
+                [ProjectSettings],
+                [SRU],
+                [Year],
+                [VATCode],
+                [__FK_Accounts] AS [__KEY_root]
+            RESIDENT RestConnectorMasterTable
+            WHERE NOT IsNull([__FK_Accounts]);
+
+            DROP TABLE RestConnectorMasterTable;
+            
+			Sleep 50;
+            
+    NEXT vPage
+
+    // --- Store final data ---
+    CALL store_qvd('$(vTable)');
+    
+END SUB // Extract_Accounts
+
+///$tab Cost Center
+//#002
+SUB Extract_CostCenters
+
+    TRACE Starting Extract_CostCenters for $(vCompany);
+
+    // --- Setup ---
+    SET vURL = '$(vu_api_base_url(costcenters))?limit=$(vAPILimit)';
+    SET vNoOfPages = 0;
+    LET vTable ='CostCenters';
+
+    LIB CONNECT TO '$(vConnection)';
+
+    // --- Get MetaInformation (e.g. total pages to fetch) ---
+    tmpMetaInformation:
+    SQL SELECT 
+        "__KEY_root",
+        (SELECT 
+            "@TotalResources",
+            "@TotalPages",
+            "@CurrentPage",
+            "__FK_MetaInformation"
+         FROM "MetaInformation" FK "__FK_MetaInformation")
+    FROM JSON (wrap on) "root" PK "__KEY_root"
+    WITH CONNECTION (
+        URL "$(vURL)",
+        HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+    );
+
+    MetaInformation:
+    LOAD
+        [@TotalPages] AS MaxPages
+    RESIDENT tmpMetaInformation
+    WHERE NOT IsNull([__FK_MetaInformation]);
+    
+
+    // Get number of pages from loaded metadata
+    LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInformation'),0);
+
+    // Clean up temporary tables
+    DROP TABLE tmpMetaInformation, MetaInformation;
+
+    TRACE CostCenters - Total Pages to Load: $(vNoOfPages);
+
+    // --- Loop over pages to extract Cost Center data ---
+    FOR vPage = 1 TO $(vNoOfPages)
+
+        TRACE Loading CostCenters Page $(vPage);
+       
+        RestConnectorMasterTable:
+        SQL SELECT 
+            "__KEY_root",
+            (SELECT 
+                "@url",
+                "Code",
+                "Description",
+                "Note",
+                "Active",
+                "__FK_CostCenters"
+             FROM "CostCenters" FK "__FK_CostCenters")
+        FROM JSON (wrap on) "root" PK "__KEY_root"
+        WITH CONNECTION (
+            URL "$(vURL)&page=$(vPage)",
+            HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+        );
+
+        [$(vTable)]:
+        LOAD
+            [@url],
+            '$(vCompany)' AS Company,
+            [Code],
+            [Description],
+            [Note],
+            [Active],
+            [__FK_CostCenters] AS [__KEY_root]
+        RESIDENT RestConnectorMasterTable
+        WHERE NOT IsNull([__FK_CostCenters]);
+
+        DROP TABLE RestConnectorMasterTable;
+            
+		Sleep 50;
+            
+    NEXT vPage
+
+    // --- Store final data ---
+    CALL store_qvd('$(vTable)');
+    
+END SUB // Extract_CostCenters
+
+///$tab Projects
+//#002
+SUB Extract_Projects
+
+    TRACE Starting Extract_Projects for $(vCompany);
+
+    // --- Setup ---
+    SET vURL = '$(vu_api_base_url(projects))?limit=$(vAPILimit)';
+    SET vNoOfPages = 0;
+    LET vTable ='Projects';
+
+    LIB CONNECT TO '$(vConnection)';
+
+    // --- Get MetaInformation (e.g. total pages to fetch) ---
+    tmpMetaInformation:
+    SQL SELECT 
+        "__KEY_root",
+        (SELECT 
+            "@TotalResources",
+            "@TotalPages",
+            "@CurrentPage",
+            "__FK_MetaInformation"
+         FROM "MetaInformation" FK "__FK_MetaInformation")
+    FROM JSON (wrap on) "root" PK "__KEY_root"
+    WITH CONNECTION (
+        URL "$(vURL)",
+        HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+    );
+
+    MetaInformation:
+    LOAD
+        [@TotalPages] AS MaxPages
+    RESIDENT tmpMetaInformation
+    WHERE NOT IsNull([__FK_MetaInformation]);
+    
+
+    // Get number of pages from loaded metadata
+    LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInformation'),0);
+
+    // Clean up temporary tables
+    DROP TABLE tmpMetaInformation, MetaInformation;
+
+    TRACE Projects - Total Pages to Load: $(vNoOfPages);
+
+    // --- Loop over pages to extract Project data ---
+    FOR vPage = 1 TO $(vNoOfPages)
+
+        TRACE Loading Projects Page $(vPage);
+       
+        RestConnectorMasterTable:
+        SQL SELECT 
+            "__KEY_root",
+            (SELECT 
+                "@url",
+                "Description",
+                "EndDate",
+                "ProjectLeader",
+                "ProjectNumber",
+                "Status",
+                "StartDate",
+                "__FK_Projects"
+             FROM "Projects" FK "__FK_Projects")
+        FROM JSON (wrap on) "root" PK "__KEY_root"
+        WITH CONNECTION (
+            URL "$(vURL)&page=$(vPage)",
+            HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+        );
+
+        [$(vTable)]:
+        LOAD
+            [@url],
+            '$(vCompany)' AS Company,
+            [Description],
+            [EndDate],
+            [ProjectLeader],
+            [ProjectNumber],
+            [Status],
+            [StartDate],
+            [__FK_Projects] AS [__KEY_root]
+        RESIDENT RestConnectorMasterTable
+        WHERE NOT IsNull([__FK_Projects]);
+
+        DROP TABLE RestConnectorMasterTable;
+        
+		Sleep 50;
+            
+    NEXT vPage
+
+    // --- Store final data ---
+    CALL store_qvd('$(vTable)');
+    
+END SUB // Extract_Projects
+
+///$tab -- --
+
+///$tab -- TRANS --
+
+///$tab VoucherList
+SUB Extract_Vouchers
+
+    TRACE Starting Extract_Vouchers for $(vCompany);
+
+    // --- Setup ---
+    SET vURL = '$(vu_api_base_url(vouchers))';
+    LET vNoOfPages = 0;
+    LET vCounter = 0;
+    LET vTable = 'Vouchers';
+
+    // --- Check for existing QVD and determine incremental load date ---
+    CALL Check_incremental('$(vTable)'); // Check if incremental QVD avilable
+    
+    LIB CONNECT TO '$(vConnection)';
+    
+    For each vFinancialYearID in $(vAllFinancialYears)
+            
+   		 // --- Get total pages for this financial year ---
+   		 tmpMetaInfoVouchers:
+   		 SQL SELECT 
+   		     "__KEY_root",
+   		     (SELECT 
+   		         "@TotalPages",
+                 "@TotalResources",
+   		         "__FK_MetaInformation"
+   		      FROM "MetaInformation" FK "__FK_MetaInformation")
+   		 FROM JSON (wrap on) "root" PK "__KEY_root"
+   		 WITH CONNECTION (
+   		     URL "$(vURL)?limit=$(vAPILimit)&financialyear=$(vFinancialYearID)&lastmodified=$(vIncrementalStartTime)",
+   		     HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		 );
+			
+      
+   		 MetaInfoVouchers:
+   		 LOAD
+   		     [@TotalPages] AS MaxPages,
+             [@TotalResources] AS TotalResources
+   		 RESIDENT tmpMetaInfoVouchers
+   		 WHERE NOT IsNull([__FK_MetaInformation]);
+
+   		 LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInfoVouchers'),0);
+         Let vTotalResources = alt(Peek('TotalResources', 0, 'MetaInfoVouchers'),0);
+         
+         Let vTraceMessage = If(vTotalResources >0,'Total Voucher pages to load: $(vNoOfPages)','No updated records since last reload. Exiting Sub');
+         Trace $(vTraceMessage);
+         DROP VARIABLE vTraceMessage;
+         
+   		 DROP TABLE MetaInfoVouchers, tmpMetaInfoVouchers;
+         EXIT SUB UNLESS vTotalResources>0 // No new records
+
+		
+   		 // --- Loop through pages ---
+   		 FOR vPage = 1 TO $(vNoOfPages)
+		
+   		     TRACE Loading Vouchers - FY: $(vFinancialYearID), Page $(vPage) of $(vNoOfPages);
+		
+   		     RestConnectorMasterTable:
+   		     SQL SELECT 
+   		         "__KEY_root",
+   		         (SELECT "@url" FROM "Vouchers" FK "__FK_Vouchers")
+   		     FROM JSON (wrap on) "root" PK "__KEY_root"
+   		     WITH CONNECTION (
+   		         URL "$(vURL)?limit=$(vAPILimit)&financialyear=$(vFinancialYearID)&lastmodified=$(vIncrementalStartTime)&page=$(vPage)",
+   		         HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		     );
+		
+   		     Voucher_URL:
+   		     LOAD [@url] AS URL
+   		     RESIDENT RestConnectorMasterTable
+   		     WHERE Len([@url]) > 0;
+		
+   		     DROP TABLE RestConnectorMasterTable;
+             
+//    		     // --- Extract each voucher via its URL ---
+   		     FOR EACH vLoopUrl IN FieldValueList('URL')
+   		         TRACE Fetching voucher from URL: $(vLoopUrl);
+   		         CALL Extract_VoucherDetails('$(vLoopUrl)');
+				 CALL CheckTokenExpired; // Refresh token if needed
+   		     NEXT vLoopUrl
+             
+   		     DROP TABLE Voucher_URL;
+
+   		 NEXT  vPage
+         
+	NEXT vFinancialYearID
+    
+	LEFT JOIN($(vTable)_Rows)
+	LOAD *,
+	'$(vStartTime)' 		as lastmodify,		
+	'$(vCompany)' 			AS Company 
+	RESIDENT [$(vTable)];	
+	DROP TABLE [$(vTable)];
+    
+    RENAME TABLE [$(vTable)_Rows] TO [$(vTable)];
+    
+    // --- Final processing ---
+    CALL AddTag('$(vTable)');
+    CALL Incremental_Load('$(vTable)');
+    CALL store_qvd('$(vTable)');
 
 END SUB
 
-///$tab Sheet Timer
+///$tab VoucerTransactions
+// Denna funktion hämtar ut en viss voucher i samband med att vi loopar runt VoucherList.
+SUB Extract_VoucherDetails(_URL)
+
+      RestConnectorMasterTable:
+      SQL SELECT 
+          "@url",
+          "Comments",
+          "CostCenter" AS "CostCenter_u0",
+          "Description" AS "Description_u0",
+          "Project" AS "Project_u0",
+          "ReferenceNumber",
+          "ReferenceType",
+          "TransactionDate",
+          "VoucherNumber",
+          "VoucherSeries",
+          "Year",
+          "ApprovalState",
+          "__KEY_Voucher",
+          (SELECT 
+              "Account",
+              "CostCenter",
+              "Credit",
+              "Description",
+              "Debit",
+              "Project",
+              "Removed",
+              "TransactionInformation",
+              "Quantity",
+              "__FK_VoucherRows"
+          FROM "VoucherRows" FK "__FK_VoucherRows")
+      FROM JSON (wrap off) "Voucher" PK "__KEY_Voucher"
+          WITH CONNECTION (
+          URL "$(_URL)",
+		HTTPHEADER "Authorization" "Bearer $(vAccessToken)" );
+
+
+   [$(vTable)_Rows]:
+    LOAD	
+    	[Account] AS [AccountNo],
+        [CostCenter],
+        [Credit],
+        [Description],
+        [Debit],
+        [Project],
+        [Removed],
+        [TransactionInformation],
+        [Quantity],
+        [__FK_VoucherRows] & '|' & $(vCounter) & '|' & '$(vUniqueKey)' AS [__KEY_Voucher]
+    RESIDENT RestConnectorMasterTable
+    WHERE NOT IsNull([__FK_VoucherRows]);
+
+     [$(vTable)]:
+      LOAD	
+       	  [@url],
+          [Comments],
+          [Description_u0],
+          [Project_u0],
+          [ReferenceNumber],
+          [ReferenceType],
+          [TransactionDate],
+          [TransactionDate] AS Date,
+          [VoucherNumber],
+          [VoucherSeries],
+          [Year],
+          [ApprovalState],
+          [__KEY_Voucher] & '|' & $(vCounter) & '|' & '$(vUniqueKey)' AS [__KEY_Voucher]
+      RESIDENT RestConnectorMasterTable
+      WHERE NOT IsNull([__KEY_Voucher]);
+
+      DROP TABLE RestConnectorMasterTable;
+
+	  LET vCounter = $(vCounter) + 1;
+      
+      Sleep 50;		
+	
+END SUB 
+
+///$tab Invoice
+SUB Extract_Invoices
+
+    TRACE Starting Extract_Invoices for $(vCompany);
+
+    // --- Setup ---
+    SET vURL = '$(vu_api_base_url(invoices))';
+    LET vNoOfPages = 0;
+    LET vCounter = 0;
+    LET vTable = 'Invoices';
+
+    // --- Check for existing QVD and determine incremental load date ---
+    CALL Check_incremental('$(vTable)'); // Check if incremental QVD avilable
+    
+    LIB CONNECT TO '$(vConnection)';
+                
+   		 // --- Get total pages for this financial year ---
+   		 tmpMetaInfoInvoices:
+   		 SQL SELECT 
+   		     "__KEY_root",
+   		     (SELECT 
+   		         "@TotalPages",
+                 "@TotalResources",
+   		         "__FK_MetaInformation"
+   		      FROM "MetaInformation" FK "__FK_MetaInformation")
+   		 FROM JSON (wrap on) "root" PK "__KEY_root"
+   		 WITH CONNECTION (
+   		     URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)",
+   		     HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		 );
+			
+      
+   		 MetaInfoInvoices:
+   		 LOAD
+   		     [@TotalPages] AS MaxPages,
+             [@TotalResources] AS TotalResources
+   		 RESIDENT tmpMetaInfoInvoices
+   		 WHERE NOT IsNull([__FK_MetaInformation]);
+
+   		 LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInfoInvoices'),0);
+         Let vTotalResources = alt(Peek('TotalResources', 0, 'MetaInfoInvoices'),0);
+         
+   		 Let vTraceMessage = If(vTotalResources >0,'Total Invoice pages to load: $(vNoOfPages)','No updated records since last reload. Exiting Sub');
+         Trace $(vTraceMessage);
+         DROP VARIABLE vTraceMessage;
+   		 DROP TABLE MetaInfoInvoices,tmpMetaInfoInvoices;
+		
+         EXIT SUB UNLESS vTotalResources>0 // No new records
+         
+   		 // --- Loop through pages ---
+   		 FOR vPage = 1 TO $(vNoOfPages)
+		
+   		     TRACE Loading Invoices - FY: $(vFinancialYearID), Page $(vPage) of $(vNoOfPages);
+		
+   		     RestConnectorMasterTable:
+   		     SQL SELECT 
+   		         "__KEY_root",
+   		         (SELECT "@url" FROM "Invoices" FK "__FK_Invoices")
+   		     FROM JSON (wrap on) "root" PK "__KEY_root"
+   		     WITH CONNECTION (
+   		         URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)&page=$(vPage)",
+   		         HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		     );
+		
+   		     Invoice_URLs:
+   		     LOAD [@url] AS URL
+   		     RESIDENT RestConnectorMasterTable
+   		     WHERE Len([@url]) > 0;
+		
+   		     DROP TABLE RestConnectorMasterTable;
+   		     // --- Extract each Invoice via its URL ---
+   		     FOR EACH vLoopUrl IN FieldValueList('URL')
+   		        TRACE Fetching Invoice from URL: $(vLoopUrl);
+   		        CALL Extract_InvoiceDetails('$(vLoopUrl)');
+				CALL CheckTokenExpired; // Refresh token if needed
+   		     NEXT vLoopUrl
+
+   		     DROP TABLE Invoice_URLs;
+
+   		 NEXT  vPage
+             
+	LEFT JOIN($(vTable)_Rows)
+    LOAD  *,
+		'$(vStartTime)' 		as lastmodify,		
+		'$(vCompany)' 			AS Company 
+	RESIDENT [$(vTable)];	
+	DROP TABLE [$(vTable)];
+    
+    RENAME TABLE [$(vTable)_Rows] TO [$(vTable)];
+    
+    // --- Final processing ---
+    CALL AddTag('$(vTable)');
+    CALL Incremental_Load('$(vTable)');
+    CALL store_qvd('$(vTable)');
+
+END SUB
+
+///$tab Invoice Rows
+SUB Extract_InvoiceDetails(_URL)
+
+    RestConnectorMasterTable:
+    SQL SELECT 
+        "@url",
+//      "@urlTaxReductionList",             // ROT/RUT – not needed
+        "AdministrationFee",
+        "AdministrationFeeVAT",
+//      "Address1",                         // Get from Customers table instead
+//      "Address2",                         // Get from Customers table instead
+        "Balance",
+//      "BasisTaxReduction",                // ROT/RUT – not needed
+        "Booked",
+        "Cancelled",
+//      "City",                             // Get from Customers table instead
+        "Comments",
+//      "ContractReference",                // Contracts module – not needed
+        "ContributionPercent" AS "ContributionPercent_u0",
+        "ContributionValue" AS "ContributionValue_u0",
+//      "Country",                          // Get from Customers table instead
+        "CostCenter" AS "CostCenter_u0",
+        "Credit",
+        "CreditInvoiceReference",
+        "Currency",
+        "CurrencyRate",
+        "CurrencyUnit",
+        "CustomerName",
+        "CustomerNumber",
+//      "DeliveryAddress1",                 // Remove if not analysing delivery vs billing
+//      "DeliveryAddress2",                 // Remove if not analysing delivery vs billing
+//      "DeliveryCity",                     // Remove if not analysing delivery vs billing
+//      "DeliveryCountry",                  // Remove if not analysing delivery vs billing
+        "DeliveryDate",
+//      "DeliveryName",                     // Remove if not analysing delivery vs billing
+//      "DeliveryZipCode",                  // Remove if not analysing delivery vs billing
+        "DocumentNumber",
+        "DueDate",
+//      "EUQuarterlyReport",                // VAT reporting flag – rarely needed in dashboards
+//      "ExternalInvoiceReference1",        // Remove if not using external references
+//      "ExternalInvoiceReference2",        // Remove if not using external references
+        "Freight",
+        "FreightVAT",
+        "Gross",
+//      "HouseWork" AS "HouseWork_u0",      // ROT/RUT – not needed
+        "InvoiceDate",
+//      "InvoicePeriodStart",               // Periodic invoicing only
+//      "InvoicePeriodEnd",                 // Periodic invoicing only
+        "InvoiceReference",
+        "InvoiceType",
+//      "Language",                         // Almost always null
+        "LastRemindDate",
+        "Net",
+        "NotCompleted",
+//      "NoxFinans",                        // Fortnox Finans factoring – not needed
+        "OCR",
+        "OfferReference",
+        "OrderReference",
+//      "OrganisationNumber",               // Get from Customers table instead
+        "OurReference",
+        "PaymentWay",
+//      "Phone1",                           // Get from Customers table instead
+//      "Phone2",                           // Get from Customers table instead
+        "PriceList",
+//      "PrintTemplate",                    // UI setting – not analytical
+        "Project" AS "Project_u0",
+        "WarehouseReady",
+        "OutboundDate",
+        "Remarks",
+        "Reminders",
+        "RoundOff",
+        "Sent",
+//      "TaxReduction",                     // ROT/RUT – not needed
+        "TermsOfDelivery",
+        "TermsOfPayment",
+//      "TimeBasisReference",               // Time reporting – niche use
+        "Total" AS "Total_u0",
+        "TotalToPay",
+        "TotalVAT",
+//      "VATIncluded",                      // Usually constant per company
+        "VoucherNumber",
+        "VoucherSeries",
+        "VoucherYear",
+        "WayOfDelivery",
+        "YourOrderNumber",
+        "YourReference",
+//      "ZipCode",                          // Get from Customers table instead
+//      "AccountingMethod",                 // Usually constant per company
+        "FinalPayDate",
+//      "TaxReductionType",                 // ROT/RUT – not needed
+        "__KEY_Invoice",
+        (SELECT 
+            "AccountNumber",
+            "ArticleNumber",
+//          "ContributionPercent",          // Derivable if needed
+//          "ContributionValue",            // Derivable if needed
+            "Cost",                         
+            "CostCenter",
+            "DeliveredQuantity",
+            "Description",
+            "Discount",
+            "DiscountType",
+//          "HouseWork",                    // ROT/RUT – not needed
+//          "HouseWorkHoursToReport",       // ROT/RUT – not needed
+//          "HouseWorkType",                // ROT/RUT – not needed
+            "Price",
+//          "PriceExcludingVAT",            // Derivable: Price / (1 + VAT/100)
+            "Project",
+            "RowId",
+//          "StockPointCode",               // Multi-warehouse only
+            "Total",
+//          "TotalExcludingVAT",            // Derivable from Total and VAT
+            "Unit",
+            "VAT",
+            "__FK_InvoiceRows"
+        FROM "InvoiceRows" FK "__FK_InvoiceRows")
+//      Removed Labels sub-select – uncomment below if you use invoice labels:
+//      ,(SELECT 
+//          "@Value",
+//          "__FK_Labels"
+//      FROM "Labels" FK "__FK_Labels" ArrayValueAlias "@Value")
+    FROM JSON (wrap off) "Invoice" PK "__KEY_Invoice"
+    WITH CONNECTION (
+        URL "$(_URL)",
+        HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+    );
+
+
+    [$(vTable)_Rows]:
+    LOAD
+        [AccountNumber],
+        [ArticleNumber],
+//      [ContributionPercent],              // Commented out above in SQL
+//      [ContributionValue],                // Commented out above in SQL
+        [Cost],                             
+        [CostCenter],
+        [DeliveredQuantity],
+        [Description],
+        [Discount],
+        [DiscountType],
+//      [HouseWork],                        // ROT/RUT – not needed
+//      [HouseWorkHoursToReport],           // ROT/RUT – not needed
+//      [HouseWorkType],                    // ROT/RUT – not needed
+        [Price],
+//      [PriceExcludingVAT],                // Derivable: Price / (1 + VAT/100)
+        [Project],
+        [RowId],
+//      [StockPointCode],                   // Multi-warehouse only
+        [Total],
+//      [TotalExcludingVAT],                // Derivable from Total and VAT
+        [Unit],
+        [VAT],
+        [__FK_InvoiceRows] & '|' & $(vCounter) & '|' & '$(vUniqueKey)' AS [__KEY_Invoice]
+    RESIDENT RestConnectorMasterTable
+    WHERE NOT IsNull([__FK_InvoiceRows]);
+
+
+    [$(vTable)]:
+    LOAD
+        [@url],
+//      [@urlTaxReductionList],             // ROT/RUT – not needed
+        [AdministrationFee],
+        [AdministrationFeeVAT],
+//      [Address1],                         // Get from Customers table instead
+//      [Address2],                         // Get from Customers table instead
+        [Balance],
+//      [BasisTaxReduction],                // ROT/RUT – not needed
+        [Booked],
+        [Cancelled],
+//      [City],                             // Get from Customers table instead
+        [Comments],
+//      [ContractReference],                // Contracts module – not needed
+        [ContributionPercent_u0],
+        [ContributionValue_u0],
+//      [Country],                          // Get from Customers table instead
+        [CostCenter_u0],
+        [Credit],
+        [CreditInvoiceReference],
+        [Currency],
+        [CurrencyRate],
+        [CurrencyUnit],
+        [CustomerName],
+        [CustomerNumber],
+//      [DeliveryAddress1],                 // Remove if not analysing delivery vs billing
+//      [DeliveryAddress2],                 // Remove if not analysing delivery vs billing
+//      [DeliveryCity],                     // Remove if not analysing delivery vs billing
+//      [DeliveryCountry],                  // Remove if not analysing delivery vs billing
+        [DeliveryDate],
+//      [DeliveryName],                     // Remove if not analysing delivery vs billing
+//      [DeliveryZipCode],                  // Remove if not analysing delivery vs billing
+        [DocumentNumber],
+        [DueDate],
+//      [EUQuarterlyReport],                // VAT reporting flag – rarely needed in dashboards
+//      [ExternalInvoiceReference1],        // Remove if not using external references
+//      [ExternalInvoiceReference2],        // Remove if not using external references
+        [Freight],
+        [FreightVAT],
+        [Gross],
+//      [HouseWork_u0],                     // ROT/RUT – not needed
+        [InvoiceDate],
+        [InvoiceDate] AS Date,
+//      [InvoicePeriodStart],               // Periodic invoicing only
+//      [InvoicePeriodEnd],                 // Periodic invoicing only
+        [InvoiceReference],
+        [InvoiceType],
+//      [Language],                         // Almost always null
+        [LastRemindDate],
+        [Net],
+        [NotCompleted],
+//      [NoxFinans],                        // Fortnox Finans factoring – not needed
+        [OCR],
+        [OfferReference],
+        [OrderReference],
+//      [OrganisationNumber],               // Get from Customers table instead
+        [OurReference],
+        [PaymentWay],
+//      [Phone1],                           // Get from Customers table instead
+//      [Phone2],                           // Get from Customers table instead
+        [PriceList],
+//      [PrintTemplate],                    // UI setting – not analytical
+        [Project_u0],
+        [WarehouseReady],
+        [OutboundDate],
+        [Remarks],
+        [Reminders],
+        [RoundOff],
+        [Sent],
+//      [TaxReduction],                     // ROT/RUT – not needed
+        [TermsOfDelivery],
+        [TermsOfPayment],
+//      [TimeBasisReference],               // Time reporting – niche use
+        [Total_u0],
+        [TotalToPay],
+        [TotalVAT],
+//      [VATIncluded],                      // Usually constant per company
+        [VoucherNumber],
+        [VoucherSeries],
+        [VoucherYear],
+        [WayOfDelivery],
+        [YourOrderNumber],
+        [YourReference],
+//      [ZipCode],                          // Get from Customers table instead
+//      [AccountingMethod],                 // Usually constant per company
+        [FinalPayDate],
+//      [TaxReductionType],                 // ROT/RUT – not needed
+        [__KEY_Invoice] & '|' & $(vCounter) & '|' & '$(vUniqueKey)' AS [__KEY_Invoice]
+    RESIDENT RestConnectorMasterTable
+    WHERE NOT IsNull([__KEY_Invoice]);
+
+    DROP TABLE RestConnectorMasterTable;
+
+    LET vCounter = $(vCounter) + 1;
+
+    Sleep 50;       // Rate limiting pause – avoid hitting Fortnox API limits
+
+END SUB
+///$tab Supplier Invoice
+//#004
+SUB Extract_SupplierInvoices
+
+    TRACE Starting Extract_SupplierInvoices for $(vCompany);
+
+    // --- Setup ---
+    SET vURL = '$(vu_api_base_url(supplierinvoices))';
+    LET vNoOfPages = 0;
+    LET vCounter = 0;
+    LET vTable = 'SupplierInvoices';
+
+    // --- Check for existing QVD and determine incremental load date ---
+    CALL Check_incremental('$(vTable)'); // Check if incremental QVD avilable
+     
+    LIB CONNECT TO '$(vConnection)';
+                
+   		 // --- Get total pages for this financial year ---
+   		 tmpMetaInfoSupplierInvoices:
+   		 SQL SELECT 
+   		     "__KEY_root",
+   		     (SELECT 
+   		         "@TotalPages",
+                 "@TotalResources",
+   		         "__FK_MetaInformation"
+   		      FROM "MetaInformation" FK "__FK_MetaInformation")
+   		 FROM JSON (wrap on) "root" PK "__KEY_root"
+   		 WITH CONNECTION (
+   		     URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)",
+   		     HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		 );
+			
+      
+   		 MetaInfoSupplierInvoices:
+   		 LOAD
+   		     [@TotalPages] AS MaxPages,
+             [@TotalResources] AS TotalResources
+   		 RESIDENT tmpMetaInfoSupplierInvoices
+   		 WHERE NOT IsNull([__FK_MetaInformation]);
+
+   		 LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInfoSupplierInvoices'),0);
+         Let vTotalResources = alt(Peek('TotalResources', 0, 'MetaInfoSupplierInvoices'),0);
+         
+   		 Let vTraceMessage = If(vTotalResources >0,'Total SupplierInvoice pages to load: $(vNoOfPages)','No updated records since last reload. Exiting Sub');
+         Trace $(vTraceMessage);
+         DROP VARIABLE vTraceMessage;
+         
+   		 DROP TABLE MetaInfoSupplierInvoices,tmpMetaInfoSupplierInvoices;
+		
+         EXIT SUB UNLESS vTotalResources>0 // No new records
+         
+   		 // --- Loop through pages ---
+   		 FOR vPage = 1 TO $(vNoOfPages)
+		
+   		     TRACE Loading SupplierInvoices - FY: $(vFinancialYearID), Page $(vPage) of $(vNoOfPages);
+		
+   		     RestConnectorMasterTable:
+   		     SQL SELECT 
+   		         "__KEY_root",
+   		         (SELECT "@url" FROM "SupplierInvoices" FK "__FK_SupplierInvoices")
+   		     FROM JSON (wrap on) "root" PK "__KEY_root"
+   		     WITH CONNECTION (
+   		         URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)&page=$(vPage)",
+   		         HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		     );
+		
+   		     SupplierInvoice_URLs:
+   		     LOAD [@url] AS URL
+   		     RESIDENT RestConnectorMasterTable
+   		     WHERE Len([@url]) > 0;
+		
+   		     DROP TABLE RestConnectorMasterTable;
+//    		     // --- Extract each SupplierInvoice via its URL ---
+   		     FOR EACH vLoopUrl IN FieldValueList('URL')
+   		        TRACE Fetching SupplierInvoice from URL: $(vLoopUrl);
+   		        CALL Extract_SupplierInvoiceRows('$(vLoopUrl)');
+				CALL CheckTokenExpired; // Refresh token if needed
+   		     NEXT vLoopUrl
+
+   		     DROP TABLE SupplierInvoice_URLs;
+
+   		 NEXT  vPage
+             
+  	LEFT JOIN($(vTable)_Rows)
+    LOAD  *,
+		'$(vStartTime)' 		as lastmodify,		
+		'$(vCompany)' 			AS Company 
+	RESIDENT [$(vTable)];	
+	DROP TABLE [$(vTable)];
+    
+    RENAME TABLE [$(vTable)_Rows] TO [$(vTable)];
+    
+    // --- Final processing ---
+    CALL AddTag('$(vTable)');
+    CALL Incremental_Load('$(vTable)');
+    CALL store_qvd('$(vTable)');
+
+END SUB
+
+///$tab Supplier Invoice Rows
+// #004
+SUB Extract_SupplierInvoiceRows(_URL)
+      
+    RestConnectorMasterTable:
+    SQL SELECT 
+        "@url",
+        "AdministrationFee",
+        "Balance",
+        "Booked",
+        "Cancelled",
+        "Comments",
+        "CostCenter" AS "CostCenter_u0",
+        "Credit" AS "Credit_u0",
+        "CreditReference",
+        "Currency",
+        "CurrencyRate",
+        "CurrencyUnit",
+        "DisablePaymentFile",
+        "DueDate",
+        "ExternalInvoiceNumber",
+        "ExternalInvoiceSeries",
+        "Freight",
+        "GivenNumber",
+        "InvoiceDate",
+        "InvoiceNumber",
+        "OCR",
+        "OurReference",
+        "PaymentPending",
+        "Project" AS "Project_u0",
+        "RoundOffValue",
+        "SupplierNumber",
+        "SupplierName",
+        "Total" AS "Total_u0",
+        "VAT",
+        "YourReference",
+        "VoucherNumber",
+        "VoucherSeries",
+        "VoucherYear",
+        "VATType",
+        "SalesType",
+        "AccountingMethod",
+        "FinalPayDate",
+        "__KEY_SupplierInvoice",
+        (SELECT 
+            "Account",
+            "ArticleNumber",
+            "Code",
+            "CostCenter",
+            "AccountDescription",
+            "ItemDescription",
+            "Debit",
+            "DebitCurrency",
+            "Credit",
+            "CreditCurrency",
+            "Project",
+            "TransactionInformation",
+            "Price",
+            "Quantity",
+            "Total",
+            "Unit",
+            "StockPointCode",
+            "StockLocationCode",
+            "__FK_SupplierInvoiceRows"
+        FROM "SupplierInvoiceRows" FK "__FK_SupplierInvoiceRows"),
+        (SELECT 
+            "Number",
+            "Year",
+            "Series",
+            "ReferenceType",
+            "__FK_Vouchers"
+        FROM "Vouchers" FK "__FK_Vouchers")
+    FROM JSON (wrap off) "SupplierInvoice" PK "__KEY_SupplierInvoice"
+              WITH CONNECTION (
+              URL "$(_URL)",
+            HTTPHEADER "Authorization" "Bearer $(vAccessToken)" );
+
+    [$(vTable)_Rows]:
+    LOAD	[Account],
+        [ArticleNumber],
+        [Code],
+        [CostCenter],
+        [AccountDescription],
+        [ItemDescription],
+        [Debit],
+        [DebitCurrency],
+        [Credit],
+        [CreditCurrency],
+        [Project],
+        [TransactionInformation],
+        [Price],
+        [Quantity],
+        [Total],
+        [Unit],
+        [StockPointCode],
+        [StockLocationCode],
+        [__FK_SupplierInvoiceRows] & '|' & $(vCounter) & '|' & '$(vUniqueKey)' AS [__KEY_SupplierInvoice]
+    RESIDENT RestConnectorMasterTable
+    WHERE NOT IsNull([__FK_SupplierInvoiceRows]);
+
+    [$(vTable)]:
+    LOAD	[@url],
+        [AdministrationFee],
+        [Balance],
+        [Booked],
+        [Cancelled],
+        [Comments],
+        [CostCenter_u0] AS [CostCenter_u0],
+        [Credit_u0] AS [Credit_u0],
+        [CreditReference],
+        [Currency],
+        [CurrencyRate],
+        [CurrencyUnit],
+        [DisablePaymentFile],
+        [DueDate],
+        [ExternalInvoiceNumber],
+        [ExternalInvoiceSeries],
+        [Freight],
+        [GivenNumber],
+        [InvoiceDate],
+        [InvoiceDate] AS Date,
+        [InvoiceNumber],
+        [OCR],
+        [OurReference],
+        [PaymentPending],
+        [Project_u0] AS [Project_u0],
+        [RoundOffValue],
+        [SupplierNumber],
+        [SupplierName],
+        [Total_u0] AS [Total_u0],
+        [VAT],
+        [YourReference],
+        [VoucherNumber],
+        [VoucherSeries],
+        [VoucherYear],
+        [VATType],
+        [SalesType],
+        [AccountingMethod],
+        [FinalPayDate],
+        [__KEY_SupplierInvoice] & '|' & $(vCounter) & '|' & '$(vUniqueKey)' AS [__KEY_SupplierInvoice]
+    RESIDENT RestConnectorMasterTable
+    WHERE NOT IsNull([__KEY_SupplierInvoice]);
+
+    DROP TABLE RestConnectorMasterTable;
+
+    LET vCounter = $(vCounter) + 1;
+
+    Sleep 50;       // Rate limiting pause – avoid hitting Fortnox API limits
+
+END SUB 
+///$tab Orders
+SUB Extract_Orders
+
+    TRACE Starting Extract_Orders for $(vCompany);
+
+    // --- Setup ---
+    SET vURL = '$(vu_api_base_url(orders))';
+    LET vNoOfPages = 0;
+    LET vCounter = 0;
+    LET vTable = 'Orders';
+
+    // --- Check for existing QVD and determine incremental load date ---
+    CALL Check_incremental('$(vTable)'); // Check if incremental QVD avilable
+     
+    LIB CONNECT TO '$(vConnection)';
+                
+   		 // --- Get total pages for this financial year ---
+   		 tmpMetaInfoOrders:
+   		 SQL SELECT 
+   		     "__KEY_root",
+   		     (SELECT 
+   		         "@TotalPages",
+                 "@TotalResources",
+   		         "__FK_MetaInformation"
+   		      FROM "MetaInformation" FK "__FK_MetaInformation")
+   		 FROM JSON (wrap on) "root" PK "__KEY_root"
+   		 WITH CONNECTION (
+   		     URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)",
+   		     HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		 );
+			
+      
+   		 MetaInfoOrders:
+   		 LOAD
+   		     [@TotalPages] AS MaxPages,
+             [@TotalResources] AS TotalResources
+   		 RESIDENT tmpMetaInfoOrders
+   		 WHERE NOT IsNull([__FK_MetaInformation]);
+
+   		 LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInfoOrders'),0);
+         Let vTotalResources = alt(Peek('TotalResources', 0, 'MetaInfoOrders'),0);
+         
+   		 Let vTraceMessage = If(vTotalResources >0,'Total Order pages to load: $(vNoOfPages)','No updated records since last reload. Exiting Sub');
+         Trace $(vTraceMessage);
+         DROP VARIABLE vTraceMessage;
+         
+   		 DROP TABLE MetaInfoOrders,tmpMetaInfoOrders;
+		
+         EXIT SUB UNLESS vTotalResources>0 // No new records
+         
+   		 // --- Loop through pages ---
+   		 FOR vPage = 1 TO $(vNoOfPages)
+		
+   		     TRACE Loading Orders - FY: $(vFinancialYearID), Page $(vPage) of $(vNoOfPages);
+		
+   		     RestConnectorMasterTable:
+   		     SQL SELECT 
+   		         "__KEY_root",
+   		         (SELECT "@url" FROM "Orders" FK "__FK_Orders")
+   		     FROM JSON (wrap on) "root" PK "__KEY_root"
+   		     WITH CONNECTION (
+   		         URL "$(vURL)?limit=$(vAPILimit)&lastmodified=$(vIncrementalStartTime)&page=$(vPage)",
+   		         HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		     );
+		
+   		     Order_URLs:
+   		     LOAD [@url] AS URL
+   		     RESIDENT RestConnectorMasterTable
+   		     WHERE Len([@url]) > 0;
+		
+   		     DROP TABLE RestConnectorMasterTable;
+//    		     // --- Extract each Order via its URL ---
+   		     FOR EACH vLoopUrl IN FieldValueList('URL')
+   		        TRACE Fetching Order from URL: $(vLoopUrl);
+   		        CALL Extract_OrderRows('$(vLoopUrl)');
+				CALL CheckTokenExpired; // Refresh token if needed
+   		     NEXT vLoopUrl
+
+   		     DROP TABLE Order_URLs;
+
+   		 NEXT  vPage
+             
+  	LEFT JOIN($(vTable)_Rows)
+    LOAD  *,
+		'$(vStartTime)' 		as lastmodify,		
+		'$(vCompany)' 			AS Company 
+	RESIDENT [$(vTable)];	
+	DROP TABLE [$(vTable)];
+    
+    RENAME TABLE [$(vTable)_Rows] TO [$(vTable)];
+    
+    // --- Final processing ---
+    CALL AddTag('$(vTable)');
+    CALL Incremental_Load('$(vTable)');
+    CALL store_qvd('$(vTable)');
+
+END SUB
+
+///$tab Order Rows
+SUB Extract_OrderRows(_URL)
+
+    RestConnectorMasterTable:
+    SQL SELECT 
+        "@url",
+    //	"@urlTaxReductionList",				// ROT/RUT – not needed
+        "AdministrationFee",
+        "AdministrationFeeVAT",
+    //	"Address1",							// Get from Customers table instead
+    //	"Address2",							// Get from Customers table instead
+    //	"BasisTaxReduction",				// ROT/RUT – not needed
+        "Cancelled",
+    //	"City",								// Get from Customers table instead
+        "Comments",
+        "ContributionPercent" AS "ContributionPercent_u0",
+        "ContributionValue" AS "ContributionValue_u0",
+    //	"CopyRemarks",						// UI setting – not analytical
+    //	"Country",							// Get from Customers table instead
+        "CostCenter" AS "CostCenter_u0",
+        "Currency",
+        "CurrencyRate",
+        "CurrencyUnit",
+        "CustomerName",
+        "CustomerNumber",
+        "DeliveryState",
+    //	"DeliveryAddress1",					// Remove if not analysing delivery vs billing
+    //	"DeliveryAddress2",					// Remove if not analysing delivery vs billing
+    //	"DeliveryCity",						// Remove if not analysing delivery vs billing
+    //	"DeliveryCountry",					// Remove if not analysing delivery vs billing
+        "DeliveryDate",
+    //	"DeliveryName",						// Remove if not analysing delivery vs billing
+    //	"DeliveryZipCode",					// Remove if not analysing delivery vs billing
+        "DocumentNumber",
+    //	"ExternalInvoiceReference1",		// Remove if not using external references
+    //	"ExternalInvoiceReference2",		// Remove if not using external references
+        "Freight",
+        "FreightVAT",
+        "Gross",
+    //	"HouseWork" AS "HouseWork_u0",		// ROT/RUT – not needed
+        "InvoiceReference",
+    //	"Language",							// Almost always null
+        "Net",
+        "NotCompleted",
+        "OfferReference",
+        "OrderDate",
+        "OrderType",
+    //	"OrganisationNumber",				// Get from Customers table instead
+        "OurReference",
+    //	"Phone1",							// Get from Customers table instead
+    //	"Phone2",							// Get from Customers table instead
+        "PriceList",
+    //	"PrintTemplate",					// UI setting – not analytical
+        "Project" AS "Project_u0",
+        "WarehouseReady",
+        "OutboundDate",
+        "Remarks",
+        "RoundOff",
+        "Sent",
+    //	"TaxReduction",						// ROT/RUT – not needed
+        "TermsOfDelivery",
+        "TermsOfPayment",
+    //	"TimeBasisReference",				// Time reporting – niche use
+        "Total" AS "Total_u0",
+        "TotalToPay",
+        "TotalVAT",
+    //	"VATIncluded",						// Usually constant per company
+        "WayOfDelivery",
+        "YourReference",
+        "YourOrderNumber",
+    //	"ZipCode",							// Get from Customers table instead
+    //	"StockPointCode" AS "StockPointCode_u0",	// Multi-warehouse only
+    //	"StockPointId" AS "StockPointId_u0",		// Multi-warehouse only
+    //	"TaxReductionType",					// ROT/RUT – not needed
+        "__KEY_Order",
+        (SELECT 
+            "AccountNumber",
+            "ArticleNumber",
+    //		"ContributionPercent",			// Derivable if needed
+    //		"ContributionValue",			// Derivable if needed
+    //		"Cost",							// Internal cost – rarely in dashboards
+            "CostCenter",
+            "DeliveredQuantity",
+            "Description",
+            "Discount",
+            "DiscountType",
+    //		"HouseWork",					// ROT/RUT – not needed
+    //		"HouseWorkHoursToReport",		// ROT/RUT – not needed
+    //		"HouseWorkType",				// ROT/RUT – not needed
+            "OrderedQuantity",
+            "Price",
+            "Project",
+    //		"ReservedQuantity",				// Warehouse/stock planning – remove if not needed
+            "RowId",
+    //		"StockPointCode",				// Multi-warehouse only
+    //		"StockPointId",					// Multi-warehouse only
+            "Total",
+            "Unit",
+            "VAT",
+            "__FK_OrderRows"
+        FROM "OrderRows" FK "__FK_OrderRows")
+    FROM JSON (wrap off) "Order" PK "__KEY_Order"
+    WITH CONNECTION (
+        URL "$(_URL)",
+        HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+    );
+
+
+    [$(vTable)_Rows]:
+    LOAD
+        [AccountNumber],
+        [ArticleNumber],
+    //	[ContributionPercent],				// Commented out above in SQL
+    //	[ContributionValue],				// Commented out above in SQL
+    //	[Cost],								// Commented out above in SQL
+        [CostCenter],
+        [DeliveredQuantity],
+        [Description],
+        [Discount],
+        [DiscountType],
+    //	[HouseWork],						// ROT/RUT – not needed
+    //	[HouseWorkHoursToReport],			// ROT/RUT – not needed
+    //	[HouseWorkType],					// ROT/RUT – not needed
+        [OrderedQuantity],
+        [Price],
+        [Project],
+    //	[ReservedQuantity],					// Warehouse/stock planning – remove if not needed
+        [RowId],
+    //	[StockPointCode],					// Multi-warehouse only
+    //	[StockPointId],						// Multi-warehouse only
+        [Total],
+        [Unit],
+        [VAT],
+        [__FK_OrderRows] & '|' & $(vCounter) & '|' & '$(vUniqueKey)' AS [__KEY_Order]
+    RESIDENT RestConnectorMasterTable
+    WHERE NOT IsNull([__FK_OrderRows]);
+
+
+    [$(vTable)]:
+    LOAD
+        [@url],
+    //	[@urlTaxReductionList],				// ROT/RUT – not needed
+        [AdministrationFee],
+        [AdministrationFeeVAT],
+    //	[Address1],							// Get from Customers table instead
+    //	[Address2],							// Get from Customers table instead
+    //	[BasisTaxReduction],				// ROT/RUT – not needed
+        [Cancelled], //Makulerad
+    //	[City],								// Get from Customers table instead
+        [Comments],
+        [ContributionPercent_u0],
+        [ContributionValue_u0],
+    //	[CopyRemarks],						// UI setting – not analytical
+    //	[Country],							// Get from Customers table instead
+        [CostCenter_u0],
+        [Currency],
+        [CurrencyRate],
+        [CurrencyUnit],
+        [CustomerName],
+        [CustomerNumber],
+        [DeliveryState],
+    //	[DeliveryAddress1],					// Remove if not analysing delivery vs billing
+    //	[DeliveryAddress2],					// Remove if not analysing delivery vs billing
+    //	[DeliveryCity],						// Remove if not analysing delivery vs billing
+    //	[DeliveryCountry],					// Remove if not analysing delivery vs billing
+        [DeliveryDate],
+    //	[DeliveryName],						// Remove if not analysing delivery vs billing
+    //	[DeliveryZipCode],					// Remove if not analysing delivery vs billing
+        [DocumentNumber],
+    //	[ExternalInvoiceReference1],		// Remove if not using external references
+    //	[ExternalInvoiceReference2],		// Remove if not using external references
+        [Freight],
+        [FreightVAT],
+        [Gross],
+    //	[HouseWork_u0],						// ROT/RUT – not needed
+        [InvoiceReference],
+    //	[Language],							// Almost always null
+        [Net],
+        [NotCompleted],
+        [OfferReference],
+        [OrderDate],
+        [OrderDate] AS Date,
+        [OrderType],
+    //	[OrganisationNumber],				// Get from Customers table instead
+        [OurReference],
+    //	[Phone1],							// Get from Customers table instead
+    //	[Phone2],							// Get from Customers table instead
+        [PriceList],
+    //	[PrintTemplate],					// UI setting – not analytical
+        [Project_u0],
+        [WarehouseReady],
+        [OutboundDate],
+        [Remarks],
+        [RoundOff],
+        [Sent],
+    //	[TaxReduction],						// ROT/RUT – not needed
+        [TermsOfDelivery],
+        [TermsOfPayment],
+    //	[TimeBasisReference],				// Time reporting – niche use
+        [Total_u0],
+        [TotalToPay],
+        [TotalVAT],
+    //	[VATIncluded],						// Usually constant per company
+        [WayOfDelivery],
+        [YourReference],
+        [YourOrderNumber],
+    //	[ZipCode],							// Get from Customers table instead
+    //	[StockPointCode_u0],				// Multi-warehouse only
+    //	[StockPointId_u0],					// Multi-warehouse only
+    //	[TaxReductionType],					// ROT/RUT – not needed
+        [__KEY_Order] & '|' & $(vCounter) & '|' & '$(vUniqueKey)' AS [__KEY_Order]
+    RESIDENT RestConnectorMasterTable
+    WHERE NOT IsNull([__KEY_Order]);
+
+      DROP TABLE RestConnectorMasterTable;
+
+      LET vCounter = $(vCounter) + 1;
+
+      Sleep 50;       // Rate limiting pause – avoid hitting Fortnox API limits
+      
+END SUB
+///$tab Articles & Inventory
+//#003
+SUB Extract_Articles
+
+    TRACE Starting Extract_Articles for $(vCompany);
+
+    // --- Setup ---
+    SET vURL = '$(vu_api_base_url(articles))';
+    LET vNoOfPages = 0;
+    LET vTable = 'Inventory';
+    
+    LIB CONNECT TO '$(vConnection)';
+                
+   		 // --- Get total pages for this financial year ---
+   		 tmpMetaInfoArticles:
+   		 SQL SELECT 
+   		     "__KEY_root",
+   		     (SELECT 
+   		         "@TotalPages",
+   		         "__FK_MetaInformation"
+   		      FROM "MetaInformation" FK "__FK_MetaInformation")
+   		 FROM JSON (wrap on) "root" PK "__KEY_root"
+   		 WITH CONNECTION (
+   		     URL "$(vURL)?limit=$(vAPILimit)",
+   		     HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		 );
+			
+      
+   		 MetaInfoArticles:
+   		 LOAD
+   		     [@TotalPages] AS MaxPages
+   		 RESIDENT tmpMetaInfoArticles
+   		 WHERE NOT IsNull([__FK_MetaInformation]);
+
+   		 LET vNoOfPages = alt(Peek('MaxPages', 0, 'MetaInfoArticles'),0);
+   		 TRACE Total Article pages to load: $(vNoOfPages);
+
+   		 DROP TABLE MetaInfoArticles, tmpMetaInfoArticles;
+		
+        [$(vTable)]:
+		LOAD * INLINE ´ArticleNumber´;
+        
+   		 // --- Loop through pages ---
+   		 FOR vPage = 1 TO $(vNoOfPages)
+		
+   		     TRACE Loading Articles - FY: $(vFinancialYearID), Page $(vPage) of $(vNoOfPages);
+		
+   		     RestConnectorMasterTable:
+   		     SQL SELECT 
+   		         "__KEY_root",
+   		         (SELECT "@url" FROM "Articles" FK "__FK_Articles")
+   		     FROM JSON (wrap on) "root" PK "__KEY_root"
+   		     WITH CONNECTION (
+   		         URL "$(vURL)?limit=$(vAPILimit)&page=$(vPage)",
+   		         HTTPHEADER "Authorization" "Bearer $(vAccessToken)"
+   		     );
+		
+   		     Article_URL:
+   		     LOAD [@url] AS URL
+   		     RESIDENT RestConnectorMasterTable
+   		     WHERE Len([@url]) > 0;
+		
+   		     DROP TABLE RestConnectorMasterTable;
+             
+//    		     // --- Extract each Article via its URL ---
+   		     FOR EACH vLoopUrl IN FieldValueList('URL')
+   		         TRACE Fetching Article from URL: $(vLoopUrl);
+   		         CALL Extract_ArticleDetails('$(vLoopUrl)');
+				 CALL CheckTokenExpired; // Refresh token if needed
+   		     NEXT
+             
+   		     DROP TABLE Article_URL;
+
+   		 NEXT  vPage
+         
+         NoConcatenate
+         Articles:
+		 Load * Resident [$(vTable)]; // Get only articles, no incremental
+        
+             // --- Store final data ---
+    	CALL store_qvd('$(vTable)');
+		CALL store_qvd('Articles');
+            
+END SUB
+
+///$tab Article Rows
+//#003
+SUB Extract_ArticleDetails(_URL)
+
+    RestConnectorMasterTable:
+    SQL 
+    SELECT 
+        "@url",
+        "ArticleNumber",
+        "Bulky",
+        "ConstructionAccount",
+        "Depth",
+        "Description",
+        "DisposableQuantity",
+        "EAN",
+        "EUAccount",
+        "EUVATAccount",
+        "ExportAccount",
+        "Height",
+        "Housework",
+        "HouseworkType",
+        "Active",
+        "Manufacturer",
+        "ManufacturerArticleNumber",
+        "Note",
+        "PurchaseAccount",
+        "PurchasePrice",
+        "QuantityInStock",
+        "ReservedQuantity",
+        "SalesAccount",
+        "StockGoods",
+        "StockPlace",
+        "StockValue",
+        "StockWarning",
+        "SupplierName",
+        "SupplierNumber",
+        "Type",
+        "Unit",
+        "VAT",
+        "WebshopArticle",
+        "Weight",
+        "Width",
+        "Expired",
+        "SalesPrice",
+        "CostCalculationMethod",
+        "StockAccount",
+        "StockChangeAccount",
+        "DirectCost",
+        "FreightCost",
+        "OtherCost",
+        "DefaultStockPoint",
+        "DefaultStockLocation"
+
+    FROM JSON (wrap off) "Article"
+     WITH CONNECTION (
+              URL "$(_URL)",
+            HTTPHEADER "Authorization" "Bearer $(vAccessToken)" );
+
+
+	Concatenate($(vTable))
+		Load
+		'$(vStartTime)' 		as lastmodify,		
+		'$(vCompany)' 			AS Company,
+        "@url",
+        "ArticleNumber",
+        "Bulky",
+        "ConstructionAccount",
+        "Depth",
+        "Description",
+        "DisposableQuantity",
+        "EAN",
+        "EUAccount",
+        "EUVATAccount",
+        "ExportAccount",
+        "Height",
+        "Housework",
+        "HouseworkType",
+        "Active",
+        "Manufacturer",
+        "ManufacturerArticleNumber",
+        "Note",
+        "PurchaseAccount",
+        "PurchasePrice",
+        "QuantityInStock",
+        "ReservedQuantity",
+        "SalesAccount",
+        "StockGoods",
+        "StockPlace",
+        "StockValue",
+        "StockWarning",
+        "SupplierName",
+        "SupplierNumber",
+        "Type",
+        "Unit",
+        "VAT",
+        "WebshopArticle",
+        "Weight",
+        "Width",
+        "Expired",
+        "SalesPrice",
+        "CostCalculationMethod",
+        "StockAccount",
+        "StockChangeAccount",
+        "DirectCost",
+        "FreightCost",
+        "OtherCost",
+        "DefaultStockLocation"
+    RESIDENT RestConnectorMasterTable;
+
+    Drop Table RestConnectorMasterTable;
+            
+    Sleep 50;		    // Rate limiting pause – avoid hitting Fortnox API limits
+
+END SUB 
+
+///$tab -- --
+
+///$tab Incremental QVD
+SUB Check_incremental(incrTable)
+
+// ─────────────────────────────────────────────────────────────
+// Subroutine: LoadTags
+// ─────────────────────────────────────────────────────────────
+SUB LoadTags(_path)
+    _TempTags:
+    LOAD
+        SubField(Tag, '=', 1) as TagName,
+        SubField(Tag, '=', 2) as TagValue 
+    ;
+    LOAD String%Table as Tag
+    FROM [$(_path)] 
+    (XmlSimple, table is [QvdTableHeader/TableTags/String])
+    WHERE String%Table LIKE '*=*';
+
+    FOR _i = 0 TO NoOfRows('_TempTags') - 1
+        LET _vname = 'Tag:' & Peek('TagName', _i, '_TempTags');
+        LET [$(_vname)] = Peek('TagValue', _i, '_TempTags');
+    NEXT _i
+
+    DROP TABLE _TempTags;
+    SET _vname=;
+    SET _i=;
+END SUB
+
+// ─────────────────────────────────────────────────────────────
+// Incremental Load Setup
+// ─────────────────────────────────────────────────────────────
+LET vIncrQVDPath             	 = '$(vOutputQVDName($(vCompany),$(incrTable)))';
+LET vToday                       = Today(1);
+LET vIncrementalQVDsAvailable    = If(Len(FileTime('$(vIncrQVDPath)')) > 0, 1, 0);
+LET vIncrementalMessage          = If($(vIncrementalQVDsAvailable) = 1, 'Incremental QVDs found', 'No Incremental QVDs found. Do not panic. I can fix that.');
+
+
+// ─────────────────────────────────────────────────────────────
+// Full Reload Logic Based on QVD Tag
+// ─────────────────────────────────────────────────────────────
+IF $(vIncrementalQVDsAvailable) = 1 THEN
+
+    Call LoadTags('$(vIncrQVDPath)')
+    LET vLastFullReload = '$(Tag:FullReloadDate)';
+    TRACE 🔖 FullReload Tag Found: $(vLastFullReload);
+
+    IF  Today(1) - Date('$(vLastFullReload)', 'YYYY-MM-DD') >= vFullReloadFrequency THEN
+    	LET vForceFullReload = 1;
+    ELSE
+        LET vForceFullReload = 0;
+    END IF
+
+ELSE
+    LET vForceFullReload = 1;
+ENDIF
+
+
+// ─────────────────────────────────────────────────────────────
+// Determine Incremental Load Start Time
+// ─────────────────────────────────────────────────────────────
+IF $(vIncrementalQVDsAvailable) = 1 AND vForceFullReload = 0 AND vFullLoad <> 1 THEN
+
+    [$(incrTable)MaxLastupdateTime]:
+    LOAD
+        Max(lastmodify) AS $(incrTable)MaxLastupdateTime
+    FROM '$(vIncrQVDPath)' (qvd);
+
+    LET vIncrementalStartTime = Timestamp(Peek('$(incrTable)MaxLastupdateTime', 0, '$(incrTable)MaxLastupdateTime') - (1 / 24 / 60), 'YYYY-MM-DD hh:mm'); //removing 1 hour 
+    DROP TABLE [$(incrTable)MaxLastupdateTime];
+
+    LET vIncrementalStartTimeDisplay = Timestamp('$(vIncrementalStartTime)', 'YYYY-MM-DD hh:mm:ss.fff');
+    TRACE $(vIncrementalMessage) – resuming from: $(vIncrementalStartTimeDisplay);
+    SET vIncrementalStartTimeDisplay =;
+
+ELSE
+
+    TRACE $(vIncrementalMessage) – full reload logic will be used.;
+    LET vIncrementalStartTime = Timestamp(YearStart(Today(1) - vu_initial_days_back), 'YYYY-MM-DD hh:mm');
+    
+ENDIF
+
+END SUB
+
+
+SUB Incremental_Load(_Table)
+
+    // Resolve QVD file path for the target table
+    LET qvd_name = '$(vOutputQVDName($(vCompany),$(_Table)))';
+
+    // Proceed if the QVD exists (incremental load is possible)
+    IF $(vIncrementalQVDsAvailable) = 1 AND vForceFullReload <> 1 and NoOfRows('$(_Table)')>0 THEN
+
+        TRACE Performing incremental merge for [$(_Table)] using QVD: $(qvd_name);
+
+        // Build a map of new GuIDs to avoid duplicates
+        Map_$(_Table)_NewUrl:
+        MAPPING
+        LOAD DISTINCT 
+            [@url],
+            1
+        RESIDENT [$(_Table)];
+
+        Concatenate($(_Table))
+        LOAD *
+        FROM [$(qvd_name)] (qvd)
+        WHERE ApplyMap('Map_$(_Table)_NewUrl', [@url])<>1
+        AND Date(floor(Date)) >= Date(floor('$(vRollingAnlysisDate)'));
+        
+        DROP MAPPING TABLE Map_$(_Table)_NewUrl;
+
+    ELSE
+
+        TRACE No previous QVD or new records found for [$(_Table)]. Skipping incremental merge.;
+
+    END IF
+
+END SUB
+
+
+SUB AddTag(_Table)
+
+    IF $(vForceFullReload) = 1 OR $(vIncrementalQVDsAvailable) <> 1 THEN
+        TAG TABLE $(_Table) WITH 'FullReloadDate=$(vToday)';
+    ELSE
+        LET vLastFullReload = Date('$(vLastFullReload)', 'YYYY-MM-DD');
+        TAG TABLE $(_Table) WITH 'FullReloadDate=$(vLastFullReload)';
+    END IF;
+    
+END SUB
+
+///$tab Store QVD
+SUB store_qvd(_table)
+
+    TRACE Starting QVD store for table: $(_table), company: $(vCompany);
+    
+    IF '$(_table)' = 'Inventory' THEN   //#003
+    
+    	    // --- Build QVD path dynamically ---
+    	    LET qvd_name = '$(vOutputQVDName($(vCompany),$(_table)))';
+	
+			LET vIncrementalQVDsAvailable    = If(Len(FileTime('$(qvd_name)')) > 0, 1, 0);
+    	    
+    	    IF $(vIncrementalQVDsAvailable) = 1 THEN
+    	    	
+    	        // Building inventory history. Not loading todays
+    	        Concatenate($(_table))
+    	        LOAD * 
+    	        FROM '$(qvd_name)' (qvd)
+    	        WHERE Date(floor(lastmodify)) <> Date(Floor('$(vStartTime)'))
+    	        AND Date(floor(lastmodify)) >= Date(floor('$(vRollingAnlysisDate)'));
+    	    
+    	    END IF
+    	    
+    	    TRACE Storing QVD to: $(qvd_name);
+    	    STORE $(_table) INTO '$(qvd_name)' (qvd);
+            
+            // --- Log file metadata ---
+    	    QVD_Metadata:
+    	    LOAD 
+    	        '$(vCompany)' AS Company,
+    	        '$(_table)' AS Table,
+    	        FileSize('$(qvd_name)') AS FileSize,
+    	        FileTime('$(qvd_name)') AS FileTime,
+    	        QvdNoOfFields('$(qvd_name)') AS FieldCount,
+    	        QvdNoOfRecords('$(qvd_name)') AS RecordCount
+    	    AUTOGENERATE 1;
+            
+            TRACE Dropping table $(_table);
+    	    DROP TABLE [$(_table)];
+    	    
+	Else // if not inventory
+    
+    	IF NoOfRows('$(_table)') > 0  THEN
+    	
+    	        // --- Build QVD path dynamically ---
+    	    LET qvd_name = '$(vOutputQVDName($(vCompany),$(_table)))';
+	
+    	    TRACE Storing QVD to: $(qvd_name);
+    	    STORE $(_table) INTO '$(qvd_name)' (qvd);
+	
+    	    // --- Log file metadata ---
+    	    QVD_Metadata:
+    	    LOAD 
+    	        '$(vCompany)' AS Company,
+    	        '$(_table)' AS Table,
+    	        FileSize('$(qvd_name)') AS FileSize,
+    	        FileTime('$(qvd_name)') AS FileTime,
+    	        QvdNoOfFields('$(qvd_name)') AS FieldCount,
+    	        QvdNoOfRecords('$(qvd_name)') AS RecordCount
+    	    AUTOGENERATE 1;
+    	    
+    	    TRACE Dropping table $(_table);
+    	    DROP TABLE [$(_table)];
+    	ELSE
+    	
+			TRACE No rows found in $(_table) for company $(vCompany). Nothing stored;
+    	    
+    	END IF
+        
+    END IF // If inventory
+
+    TRACE Finished QVD store for $(qvd_name);
+
+END SUB
+
+///$tab Sheet timer
 /*
 ---------------------------------------------------------------------------------------------------------------------------------------
 Call this sub in the beginning and end of every section
@@ -739,43 +2247,9 @@ SUB EndTimer(timerName)
         '$(vEnd_$(timerName))'		AS EndTime,
         '$(vDuration_$(timerName))' AS Duration
     AUTOGENERATE 1;
+    
+    
 END SUB 
-///$tab Store QVD
-/*
----------------------------------------------------------------------------------------------------------------------------------------
-Call this sub when storing a table.
-This sub handles:
-- Storing table to QVD
-- Tracing start and end
-- Logging file info (size, records, fields, timestamp)
-- Dropping the original table after storing
----------------------------------------------------------------------------------------------------------------------------------------
-*/
-
-SUB Store_QVD(table)
-
-    // Build QVD output path
-    LET qvd_name = '$(vOutputQVDName($(table)))';
-
-    TRACE 📦 Storing QVD: $(qvd_name);
-    STORE $(table) INTO '$(qvd_name)' (qvd);
-
-    TRACE Stored: $(qvd_name);
-    TRACE Dropping table: $(table);
-    DROP TABLE [$(table)];
-
-    // Log QVD details
-    QVD:
-    LOAD 
-        '$(table)'                       AS Table,
-        FileSize('$(qvd_name)')          AS FileSize,
-        FileTime('$(qvd_name)')          AS FileTime,
-        QvdNoOfFields('$(qvd_name)')     AS Fields,
-        QvdNoOfRecords('$(qvd_name)')    AS Records
-    AUTOGENERATE 1;
-
-END SUB
-
 ///$tab Main
 SET ThousandSep=' ';
 SET DecimalSep=',';
@@ -798,8 +2272,14 @@ SET LongDayNames='måndag;tisdag;onsdag;torsdag;fredag;lördag;söndag';
 SET NumericalAbbreviation='3:k;6:M;9:G;12:T;15:P;18:E;21:Z;24:Y;-3:m;-6:μ;-9:n;-12:p;-15:f;-18:a;-21:z;-24:y';
 
 
+
 // ================================================================================
-// Execution Logic
+// CONFIGURATION
+// ================================================================================
+SET vOnlyExtractToken =;  // 1 = Only extract token (found in sheet). 0 = Full reload.
+
+// ================================================================================
+// HELPER: TIMED SUB EXECUTION
 // ================================================================================
 SUB Execute_Sub(sub_routine)
     Call StartTimer('$(sub_routine)');
@@ -807,19 +2287,80 @@ SUB Execute_Sub(sub_routine)
     Call EndTimer('$(sub_routine)');
 END SUB
 
-
-
 // ================================================================================
 // MAIN EXECUTION
 // ================================================================================
+FOR i = 0 TO NoOfRows('CompanyLookup') - 1
 
-CALL Execute_Sub('Variables')
-CALL Execute_Sub('Load_FX_Valutor')
-CALL Execute_Sub('Load_DIM_KostnadsStälle')
-CALL Execute_Sub('Load_DIM_Projekt')
-CALL Execute_Sub('Load_DIM_Konto')
-CALL Execute_Sub('Load_DIM_FinancialYear')
-CALL Execute_Sub('Load_DIM_Artiklar')
-CALL Execute_Sub('Load_DIM_Kunder')
-CALL Execute_Sub('Load_FCT_Faktura')
-CALL Execute_Sub('Load_FCT_Huvudbok')
+    LET vCompany   = Peek('Company', $(i), 'CompanyLookup');
+    LET vUniqueKey = Num('$(vStartTime)') & '|$(vCompany)';
+
+    Call CheckTokenExpired;         // Refresh token if needed
+    EXIT FOR WHEN vOnlyExtractToken = 1;
+
+    // --- Dim Data ---
+    Call Execute_Sub('Extract_FinancialYears');
+    Call Execute_Sub('Extract_CostCenters');
+    Call Execute_Sub('Extract_Projects');
+    Call Execute_Sub('Extract_Accounts');
+    Call Execute_Sub('Extract_Currencies');
+    Call Execute_Sub('Extract_Customers');
+
+    // --- Transaction Data ---
+    Call Execute_Sub('Extract_Vouchers');
+    Call Execute_Sub('Extract_Invoices');
+    Call Execute_Sub('Extract_SupplierInvoices');
+    Call Execute_Sub('Extract_Orders');
+    Call Execute_Sub('Extract_Articles');
+
+
+NEXT i
+
+
+
+
+
+///$tab Lost your token?
+// --------------------------------------------
+// Save Refresh Token to QVD without using it
+// --------------------------------------------
+// WHY:
+// Fortnox refresh tokens are single-use.
+// If you add them to a REST connection and save it,
+// the token is consumed immediately by the connection test.
+// To avoid wasting the token, we save it first in a QVD,
+// and only load it from the QVD when we need it in the actual connection.
+
+
+// --- Define refresh token statically (for now) ---
+// RefreshTokenFirst_tmp:
+// LOAD * INLINE [
+//     Company,         RefreshToken
+//     QlikardsBolagNYABOLAG!!!NYABOLAG!!!,   ea69005cdd7049c0fac66ec29137c536994ca321
+// ];
+
+// // --- Add a timestamp (optional for trace/debug) ---
+// RefreshTokenFirst:
+// LOAD 
+//     Company, 			
+//     RefreshToken,
+//     ConvertToLocalTime(now(1) - 1/24, '$(vGMToffset)') AS SavedTimestamp
+// RESIDENT RefreshTokenFirst_tmp;
+
+// DROP TABLE RefreshTokenFirst_tmp;
+
+// // --- Construct dynamic QVD path ---
+// LET vRefreshTokenQVDName = '$(vu_qvd_storage_connection)/RefreshTokens.qvd';
+// LET vIncrementalQVDsAvailable    = If(Len(FileTime('$(vRefreshTokenQVDName)')) > 0, 1, 0);
+
+// IF $(vIncrementalQVDsAvailable) = 1 THEN
+// Concatenate(RefreshTokenFirst)
+// LOAD * FROM '$(vRefreshTokenQVDName)' 
+// (qvd)
+// WHERE NOT Exists(Company);
+// END IF
+
+// // --- Store the token safely ---
+// STORE RefreshTokenFirst INTO [$(vRefreshTokenQVDName)] (qvd);
+
+// EXIT SCRIPT
