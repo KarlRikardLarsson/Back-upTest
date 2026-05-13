@@ -1,9 +1,605 @@
+///$tab CHANGE LOG
+/*
+	  ___   _  _  _                    _
+	 / _ \ | |(_)| | __ __ _  _ __  __| |
+	| | | || || || |/ // _` || '__|/ _` |
+	| |_| || || ||   <| (_| || |  | (_| |
+	 \__\_\|_||_||_|\_\\__,_||_|   \__,_|
+     ----------------------------------
+
+
+    Created by  : Rikard "Qlikard" Larsson
+    Title       : Business Intelligence Consultant
+    Company     : Kolibri Vision
+
+    Enjoy!
+
+    CHANGE LOG
+    ==============================================================================
+    #     User              Company          Description
+    ==============================================================================
+    #006  Rikard Larsson    Kolibri          Renamed all fields, tables, variables, and comments to English. Applied best practice naming conventions (FACT_, %KEY_, #measures, vC_, MAP_, TMPn_).
+    #005  Rikard Larsson    Kolibri          Changed storage path and added vEnv.
+    #004  Rikard Larsson    Kolibri          Translated to English, updated keys to Company&'|'&Key format, added Invoice transform SUB.
+    #003  Rikard Larsson    Kolibri          Transform Articles.
+    #002  Rikard Larsson    Kolibri          Created Report Structure excel and account transform.
+    #001  Rikard Larsson    Kolibri          Created first draft: Transform.
+    ==============================================================================
+*/
+///$tab ** Config **
+TRACE Initializing configuration and connection settings;
+
+
+// Name of spaces where QVDs are read from / written to
+SET vSpaceName_Extract   = 'D1 - Extract';
+SET vSpaceName_Transform = 'D2 - Transform';
+
+// 'True'  = load active dimensions only
+// other   = load both active and inactive dimensions
+SET vActiveOnly = 'True';
+///$tab Variables
+SUB Variables
+
+SET vQVD_Extract    = 'lib://$(vSpaceName_Extract):DataFiles/Fortnox/*/$1.qvd';
+SET vQVD_Transform  = 'lib://$(vSpaceName_Transform):DataFiles/Fortnox/$1.qvd';
+SET vQVD_FX         = 'lib://$(vSpaceName_Extract):DataFiles/Riksbanken/$1.qvd';
+
+// Personal space path — RECOMMENDED TO CHANGE TO CLOUD STORAGE
+SET vXLSX           = 'lib://DataFiles/$1.xlsx';
+
+SET vOutputQVDName = '$(vQVD_Transform)';
+SET vInputQVDName  = '$(vQVD_Extract)';
+
+
+Let vActiveList = if(lower('$(vActiveOnly)')='true',
+   '''True''',
+    '''True'',''False'''
+);
+
+LET vActiveMessage = if(Lower('$(vActiveOnly)')='true',
+  'Loading ONLY active dimensions.',
+  'Loading ALL dimensions (including inactive).'
+);
+
+TRACE $(vActiveMessage);
+SET vActiveMessage=;
+
+END SUB
+///$tab Articles
+SUB Load_DIM_Articles
+    // ----------------------------------------------------------------
+    // DIM: Articles
+    // ----------------------------------------------------------------
+    DIM_Articles:
+    LOAD
+        Company & '|' & ArticleNumber               AS %KEY_Article,
+        ArticleNumber                               AS ArticleNumber,
+        ArticleNumber & ' ' & Description           AS Article,
+        Depth                                       AS Depth,
+        EAN,
+        ExportAccount                               AS ExportAccount,
+        Manufacturer                                AS Manufacturer,
+        Note                                        AS Note,
+        PurchaseAccount                             AS PurchaseAccount,
+        PurchasePrice                               AS PurchasePrice,
+        SalesAccount                                AS SalesAccount,
+        SupplierName                                AS SupplierName
+    FROM '$(vInputQVDName(Articles))' (qvd);
+
+    // Base purchase price from the Articles dimension
+    MAP_Article_PurchasePrice:
+    MAPPING LOAD
+        %KEY_Article,
+        PurchasePrice
+    RESIDENT DIM_Articles;
+
+    // Slow-changing purchase price from Inventory — date-qualified to match the invoice date
+    TMP1_ArticlePrice:
+    LOAD
+        Company,
+        ArticleNumber,
+        PurchasePrice,
+        lastmodify
+    FROM '$(vInputQVDName(Inventory))' (qvd);
+
+    MAP_ArticleDate_PurchasePrice:
+    Mapping LOAD
+        Company & '|' & ArticleNumber & '|' & Num(Floor(lastmodify)) AS %KEY_ArticleDate,
+        PurchasePrice
+    RESIDENT TMP1_ArticlePrice;
+    DROP TABLE TMP1_ArticlePrice;
+    DROP FIELD PurchasePrice FROM DIM_Articles;
+
+
+    CALL Store_QVD('DIM_Articles')
+
+END SUB
+///$tab Currencies
+SUB Load_FX_Daily
+
+FX_Daily:
+LOAD
+    Currency,
+    %DateKey                                         AS %Date,
+    CurrencyFactor                                   AS [#CurrencyRate]
+FROM '$(vQVD_FX(Valutor_Riksbanken))' (qvd);
+
+Concatenate(FX_Daily)
+LOAD
+    Currency,
+    'BR|' & MonthStart(%Date)                        AS %Date,
+    Date(MonthStart(%Date),'YYYYMM')                 AS MonthID,
+    Avg([#CurrencyRate])                             AS [#FX_Avg],   // Income statement (average rate)
+    FirstSortedValue([#CurrencyRate], -%Date)        AS [#FX_EOM]    // Balance sheet (end-of-month rate)
+RESIDENT FX_Daily
+WHERE Exists(Currency)
+GROUP BY Currency, MonthStart(%Date);
+
+CALL Store_QVD('FX_Daily')
+
+END SUB
+///$tab Financial Year
+SUB Load_DIM_FinancialYear
+
+DIM_FinancialYear:
+LOAD
+    Company & '|' & Id                               AS %KEY_FinancialYear,
+    Year(FromDate) & '-' & Year(ToDate)              AS FinancialYear,
+    Id                                               AS FinancialYearID,
+    Num(Month(FromDate))     						 AS FiscalYearStartMonthNum
+FROM '$(vInputQVDName(FinancialYearInfo))' (qvd);
+
+CALL Store_QVD('DIM_FinancialYear')
+
+END SUB
+///$tab Account
+SUB Load_DIM_Account
+
+DIM_Account:
+LOAD
+    // Include Company in key to prevent collisions across companies
+    Company & '|' & Num(Number, '0000')              AS %KEY_Account,
+
+    Num(Number, '0000')                              AS AccountNo,
+    Description                                      AS AccountName,
+    Num(Number, '0000') & ' - ' & Description        AS Account,
+
+    // Normalize True/False to 0/1
+    If(Active = 'True', 1, 0)                        AS Account_Active,
+
+    SRU                                              AS SRU_Account
+
+FROM '$(vInputQVDName(Accounts))' (qvd)
+WHERE Match(Active, $(vActiveList));
+
+CALL Store_QVD('DIM_Account')
+
+END SUB
+///$tab Project
+SUB Load_DIM_Project
+
+TMP1_Projects:
+LOAD *
+FROM '$(vInputQVDName(Projects))' (qvd);
+
+MAP_ProjectStatus_Label:
+MAPPING LOAD * INLINE [
+Key, Value
+NOTSTARTED, Not Started
+ONGOING, Ongoing
+COMPLETED, Completed
+];
+
+DIM_Project:
+LOAD
+    Company & '|' & Trim(ProjectNumber)              AS %KEY_Project,
+    Trim(ProjectNumber)                              AS ProjectNo,
+    Description                                      AS ProjectName,
+    Trim(ProjectNumber) & ' - ' & Description        AS Project,
+
+    ApplyMap('MAP_ProjectStatus_Label', Upper(Trim(Status))) AS ProjectStatus,
+
+    Floor(StartDate)                                  AS ProjectStartNo,
+    Date(Floor(StartDate))                            AS ProjectStart,
+    Floor(EndDate)                                    AS ProjectEndNo,
+    Date(Floor(EndDate))                              AS ProjectEnd
+RESIDENT TMP1_Projects
+WHERE Len(Trim(ProjectNumber)) > 0;
+
+DROP TABLE TMP1_Projects;
+
+
+CALL Store_QVD('DIM_Project')
+
+END SUB
+///$tab Customers
+SUB Load_DIM_Customers
+
+DIM_Customers:
+LOAD
+    Company & '|' & CustomerNumber                    AS %KEY_Customer,
+    CustomerNumber & ' - ' & Name                     AS Customer,
+    CustomerNumber                                    AS CustomerNo,
+    Name                                              AS CustomerName,
+    Address1,
+    Address2,
+    City,
+    ZipCode
+FROM '$(vInputQVDName(Customers))' (qvd);
+
+
+CALL Store_QVD('DIM_Customers')
+
+END SUB
+///$tab CostCenter
+SUB Load_DIM_CostCenter
+
+DIM_CostCenter:
+LOAD
+    // Include Company in key to prevent collisions across companies
+    Company & '|' & Trim(Code)                       AS %KEY_CostCenter,
+    Trim(Code)                                       AS CostCenterCode,
+    Description                                      AS CostCenterName,
+    Trim(Code) & ' - ' & Description                 AS CostCenter,
+    // Normalize True/False to 0/1
+    If(Active = 'True' OR Active = 1, 1, 0)          AS CostCenter_Active
+FROM '$(vInputQVDName(CostCenters))' (qvd)
+WHERE Match(Active, $(vActiveList));
+
+CALL Store_QVD('DIM_CostCenter')
+
+END SUB
+///$tab Invoices
+SUB Load_FACT_Invoices
+
+// =======================
+// RAW LOAD
+// =======================
+TMP1_Invoices_Raw:
+LOAD
+    Company,
+    DocumentNumber,
+    CustomerNumber,
+    InvoiceDate,
+    DueDate,
+    Credit,
+    FinalPayDate,
+    InvoiceType,
+    AccountNumber,
+    ArticleNumber,
+    CostCenter,
+    Project,
+    DeliveredQuantity,
+    Discount,
+    VAT,
+    Description,
+    Price,
+    Freight,
+    RowId
+FROM '$(vInputQVDName(Invoices))' (qvd);
+
+// =======================
+// TRANSFORM (RESIDENT)
+// =======================
+FACT_Invoices:
+NOCONCATENATE
+LOAD
+    // ---------- Keys ----------
+    Company & '|' & Text(CustomerNumber)                        AS %KEY_Customer,
+    Company & '|' & Text(ArticleNumber)                         AS %KEY_Article,
+    Company & '|' & Num(AccountNumber, '0000')                  AS %KEY_Account,
+    Company & '|' & Trim(CostCenter)                            AS %KEY_CostCenter,
+    Company & '|' & Project                                     AS %KEY_Project,
+    Company & '|' & Text(ArticleNumber) & '|' & Text(RowId)     AS InvoiceRow,
+    Date(Floor(InvoiceDate))                                    AS %Date,
+
+    // ---------- Dimensions ----------
+    DocumentNumber                                              AS InvoiceNo,
+    Date(Floor(DueDate))                                        AS DueDate,
+    If(Credit = 'True', 1, 0)                                   AS IsCredit,
+    InvoiceType                                                 AS InvoiceType,
+    Freight                                                     AS Freight,
+    FinalPayDate                                                AS FinalPayDate,
+    Company                                                     AS Company,
+    Description                                                 AS Description,
+
+    // ---------- Measures ----------
+    DeliveredQuantity                                           AS [#DeliveredQty],
+    Price                                                       AS [#Price],
+    Discount                                                    AS [#Discount],
+    VAT                                                         AS [#VAT],
+    DeliveredQuantity * ApplyMap('MAP_ArticleDate_PurchasePrice', Company & '|' & ArticleNumber & '|' & Num(Floor(InvoiceDate)), ApplyMap('MAP_Article_PurchasePrice', Company & '|' & ArticleNumber, 0)) AS [#PurchaseCost],
+    (DeliveredQuantity * Price)                                 AS [#Revenue],
+
+    // ---------- Info ----------
+    'Invoice Fortnox'                                           AS Source
+RESIDENT TMP1_Invoices_Raw;
+
+DROP TABLE TMP1_Invoices_Raw;
+
+Left join(FACT_Invoices)
+LOAD
+    InvoiceRow,
+    ([#Revenue] - [#PurchaseCost])                              AS [#ContributionMargin]
+RESIDENT FACT_Invoices;
+
+DROP MAPPING TABLES MAP_ArticleDate_PurchasePrice, MAP_Article_PurchasePrice;
+
+CALL Store_QVD('FACT_Invoices')
+
+END SUB
+///$tab Ledger
+SUB Load_FACT_Ledger
+
+// =======================
+// RAW LOAD
+// =======================
+TMP1_Vouchers_Raw:
+LOAD
+    Company,
+    AccountNo,
+    VoucherSeries,
+    VoucherNumber,
+    CostCenter,
+    Project,
+    Description,
+    Credit,
+    @url,
+    Debit,
+    TransactionInformation,
+    Year,
+    Description_u0,
+    TransactionDate,
+    Removed
+FROM '$(vInputQVDName(Vouchers))' (qvd);
+
+// =======================
+// TRANSFORM (RESIDENT)
+// =======================
+TMP2_Vouchers:
+NOCONCATENATE
+LOAD
+    // ---------- Keys ----------
+    Company & '|' & Num(AccountNo, '0000')    AS %KEY_Account,
+    Company & '|' & Project                   AS %KEY_Project,
+    Company & '|' & Trim(CostCenter)          AS %KEY_CostCenter,
+    Company & '|' & Year                      AS %KEY_FinancialYear,
+
+    // ---------- Dimensions ----------
+    Company                                   AS Company,
+    Text(VoucherSeries) & Text(VoucherNumber) AS VoucherSeriesNo,
+    VoucherNumber                             AS VoucherNo,
+    Text(VoucherSeries)                       AS VoucherSeries,
+    Description                               AS VoucherDescription,
+    TransactionInformation                    AS TransactionInfo,
+    Description_u0,
+
+    // Dates
+    Date(Floor(TransactionDate))              AS PostingDate,
+    Floor(MonthStart(Floor(TransactionDate))) AS PeriodNo,
+    Date(MonthStart(Floor(TransactionDate)))  AS %Date,
+
+    // Amounts
+    RangeSum(Credit, -Debit)                  AS [#Amount_SEK],
+
+    // Status
+    If(Removed = 'True', 1, 0)               AS IsRemoved,
+
+    // Account class (1-8)
+    Left(Trim(AccountNo), 1)                  AS AccountClass
+
+RESIDENT TMP1_Vouchers_Raw;
+
+DROP TABLE TMP1_Vouchers_Raw;
+
+// =======================
+// BALANCE SHEET MOVEMENTS (class 1-2), per Account+Project+CostCenter+FinancialYear
+// =======================
+TMP3_BalanceMovements:
+LOAD
+    %KEY_Account,
+    %KEY_Project,
+    %KEY_CostCenter,
+    %KEY_FinancialYear,
+    Company,
+    PeriodNo,
+    Sum([#Amount_SEK]) AS [#Movement_SEK]
+RESIDENT TMP2_Vouchers
+WHERE IsRemoved = 0 AND Match(AccountClass, '1', '2')
+AND PeriodNo <= Floor(MonthStart(Today(0)))
+GROUP BY %KEY_Account, %KEY_Project, %KEY_CostCenter, %KEY_FinancialYear, Company, PeriodNo;
+
+// ---- Min..Today per key combination ----
+TMP4_MinMaxRange:
+LOAD
+    %KEY_Account,
+    %KEY_Project,
+    %KEY_CostCenter,
+    %KEY_FinancialYear,
+    Company,
+    Min(PeriodNo)               AS FromP,
+    Floor(MonthStart(Today(0))) AS ToP
+RESIDENT TMP3_BalanceMovements
+GROUP BY %KEY_Account, %KEY_Project, %KEY_CostCenter, %KEY_FinancialYear, Company;
+
+// ---- Existing composite keys (for NOT EXISTS check) ----
+TMP5_ExistingBalancePeriods:
+LOAD DISTINCT
+    AutoNumberHash128(%KEY_Account, %KEY_Project, %KEY_CostCenter, %KEY_FinancialYear, PeriodNo) AS %KEY_BalancePeriod
+RESIDENT TMP3_BalanceMovements;
+
+// ---- Fill missing months with zero rows to ensure continuous balance curves ----
+CONCATENATE (TMP3_BalanceMovements)
+LOAD
+    %KEY_Account,
+    %KEY_Project,
+    %KEY_CostCenter,
+    %KEY_FinancialYear,
+    Company,
+    GenP      AS PeriodNo,
+    0         AS [#Movement_SEK]
+WHERE NOT Exists(%KEY_BalancePeriod,
+         AutoNumberHash128(%KEY_Account, %KEY_Project, %KEY_CostCenter, %KEY_FinancialYear, GenP));
+LOAD
+    %KEY_Account,
+    %KEY_Project,
+    %KEY_CostCenter,
+    %KEY_FinancialYear,
+    Company,
+    AddMonths(FromP, IterNo()-1) AS GenP
+RESIDENT TMP4_MinMaxRange
+WHILE AddMonths(FromP, IterNo()-1) <= ToP;
+
+DROP TABLE TMP5_ExistingBalancePeriods, TMP4_MinMaxRange;
+
+// ---- Normalize: collapse any duplicate period rows created by CONCATENATE ----
+TMP6_BalanceMovements_Full:
+NOCONCATENATE
+LOAD
+    %KEY_Account,
+    %KEY_Project,
+    %KEY_CostCenter,
+    %KEY_FinancialYear,
+    Company,
+    PeriodNo,
+    Sum(-[#Movement_SEK]) AS [#Movement_SEK]
+RESIDENT TMP3_BalanceMovements
+GROUP BY %KEY_Account, %KEY_Project, %KEY_CostCenter, %KEY_FinancialYear, Company, PeriodNo
+ORDER BY %KEY_Account, %KEY_Project, %KEY_CostCenter, %KEY_FinancialYear, Company, PeriodNo;
+
+DROP TABLE TMP3_BalanceMovements;
+
+// =======================
+// OPENING / CLOSING BALANCE
+// =======================
+FACT_Ledger:
+NOCONCATENATE
+LOAD *,
+    // CB = OB + Movement
+    RangeSum([#OpeningBalance_SEK], [#Movement_SEK]) AS [#ClosingBalance_SEK];
+LOAD
+    %KEY_Account,
+    %KEY_Project,
+    %KEY_CostCenter,
+    %KEY_FinancialYear,
+    Company,
+    'BR|' & MonthStart(PeriodNo)  AS %Date,
+    PeriodNo,
+
+    // OB = previous period's CB for the same key combination
+    If(
+        Previous(%KEY_Account)       = %KEY_Account       AND
+        Previous(%KEY_Project)       = %KEY_Project       AND
+        Previous(%KEY_CostCenter)    = %KEY_CostCenter    AND
+        Previous(%KEY_FinancialYear) = %KEY_FinancialYear AND
+        Previous(Company)            = Company,
+        Peek('#ClosingBalance_SEK'),
+        0
+    )                              AS [#OpeningBalance_SEK],
+
+    [#Movement_SEK],
+    'BALANCE'                      AS ReportType,
+    'Ledger Fortnox'               AS Source
+RESIDENT TMP6_BalanceMovements_Full
+ORDER BY
+    %KEY_Account,
+    %KEY_Project,
+    %KEY_CostCenter,
+    %KEY_FinancialYear,
+    Company,
+    PeriodNo;
+
+DROP TABLE TMP6_BalanceMovements_Full;
+
+// =======================
+// INCOME STATEMENT (class 3-8)
+// =======================
+Concatenate(FACT_Ledger)
+LOAD
+    *,
+    'INCOME'          AS ReportType,
+    'Ledger Fortnox'  AS Source
+RESIDENT TMP2_Vouchers
+WHERE IsRemoved = 0 AND Match(AccountClass, '3', '4', '5', '6', '7', '8')
+AND PeriodNo <= Floor(MonthStart(Today(0)));
+;
+
+DROP TABLE TMP2_Vouchers;
+DROP FIELD PeriodNo;
+
+CALL Store_QVD('FACT_Ledger')
+
+END SUB
+///$tab Sheet Timer
+/*
+---------------------------------------------------------------------------------------------------------------------------------------
+Call this sub in the beginning and end of every section
+to know how long each section takes to load
+---------------------------------------------------------------------------------------------------------------------------------------
+*/
+
+// Start time with message
+
+SUB StartTimer(_timerName)
+	TRACE ▶️ $(_timerName);
+    LET "vStart_$(_timerName)" = now();
+END Sub
+
+SUB EndTimer(_timerName)
+	LET "vEnd_$(_timerName)" = now();
+    LET "vDuration_$(_timerName)" = Interval(vEnd_$(_timerName)-vStart_$(_timerName),'hh:mm:ss');
+    TRACE ⏱️ Execution time ($(_timerName)): $(vDuration_$(_timerName));
+
+    TimerLog:
+    LOAD
+    	'$(_timerName)'				AS Section,
+        '$(vStart_$(_timerName))'	AS StartTime,
+        '$(vEnd_$(_timerName))'		AS EndTime,
+        '$(vDuration_$(_timerName))' AS Duration
+    AUTOGENERATE 1;
+END SUB
+///$tab Store QVD
+/*
+---------------------------------------------------------------------------------------------------------------------------------------
+Call this sub when storing a table.
+This sub handles:
+- Storing table to QVD
+- Tracing start and end
+- Logging file info (size, records, fields, timestamp)
+- Dropping the original table after storing
+---------------------------------------------------------------------------------------------------------------------------------------
+*/
+
+SUB Store_QVD(_table)
+
+    // Build QVD output path
+    LET qvd_name = '$(vOutputQVDName($(_table)))';
+
+    TRACE 📦 Storing QVD: $(qvd_name);
+    STORE $(_table) INTO '$(qvd_name)' (qvd);
+
+    TRACE Stored: $(qvd_name);
+    TRACE Dropping table: $(_table);
+    DROP TABLE [$(_table)];
+
+    // Log QVD details
+    QVD:
+    LOAD 
+        '$(_table)'                       AS Table,
+        FileSize('$(qvd_name)')          AS FileSize,
+        FileTime('$(qvd_name)')          AS FileTime,
+        QvdNoOfFields('$(qvd_name)')     AS Fields,
+        QvdNoOfRecords('$(qvd_name)')    AS Records
+    AUTOGENERATE 1;
+
+END SUB
+
 ///$tab Main
-SET ThousandSep=' ';
+SET ThousandSep=' ';
 SET DecimalSep=',';
-SET MoneyThousandSep=' ';
+SET MoneyThousandSep=' ';
 SET MoneyDecimalSep=',';
-SET MoneyFormat='# ##0,00 kr;-# ##0,00 kr';
+SET MoneyFormat='# ##0,00 kr;-# ##0,00 kr';
 SET TimeFormat='hh:mm:ss';
 SET DateFormat='YYYY-MM-DD';
 SET TimestampFormat='YYYY-MM-DD hh:mm:ss[.fff]';
@@ -19,200 +615,29 @@ SET DayNames='mån;tis;ons;tors;fre;lör;sön';
 SET LongDayNames='måndag;tisdag;onsdag;torsdag;fredag;lördag;söndag';
 SET NumericalAbbreviation='3:k;6:M;9:G;12:T;15:P;18:E;21:Z;24:Y;-3:m;-6:μ;-9:n;-12:p;-15:f;-18:a;-21:z;-24:y';
 
-SET vFilePath = 'lib://....'; //Path to Report Structure file
+
+// ================================================================================
+// Execution Logic
+// ================================================================================
+SUB Execute_Sub(sub_routine)
+    Call StartTimer('$(sub_routine)');
+    Call $(sub_routine);
+    Call EndTimer('$(sub_routine)');
+END SUB
 
 
 
-///$tab Variables
-SET vSpaceName_Extract='D1 - Extract';
-SET vSpaceName_Transform='D2 - Transform';
+// ================================================================================
+// MAIN EXECUTION
+// ================================================================================
 
-SET vQVD_Storage = 'lib://$(vSpaceName_Transform):DataFiles/Report Structure/$1.qvd';
-
-///$tab Setup
-//No of account groups in table. Must start from 1
-Let vNoOfAccountGroups = 9;
-
-NoOfAccountGroups:
-Load 
-	concat('"Group Type"'&chr(38)&chr(39)&'|'&chr(39)&chr(38)&'"'&AccountGroups&'"'&' as '&'"'&AccountGroups&'"',',',recno())	as AccountGroupsInclType,
-	concat('"'&AccountGroups&'"',',',recno())																					as AccountGroups
-	;
-Load 
-	'Account Group '&iterno()																									as AccountGroups
-Autogenerate 1
-while iterno()<= $(vNoOfAccountGroups);
-
-Let vAccountGroupsInclType = Peek('AccountGroupsInclType',-1,'NoOfAccountGroups');
-Let vAccountGroups = Peek('AccountGroups',-1,'NoOfAccountGroups');
-Drop Table NoOfAccountGroups;
-///$tab Range function
-Sub ExtractRange(Field,Table)
-
-	ExtractRange1:
-	Load Distinct
-		$(Field)_tmp,
-		Subfield($(Field)_tmp,'-',1)											as RangeStart,
-		Coalesce(Subfield($(Field)_tmp,'-',2),Subfield($(Field)_tmp,'-',1))		as RangeEnd
-	Resident $(Table)
-	where not isnull($(Field)_tmp);
-
-	ExtractRange2: //Vi löser upp de intervall som är siffor
-	Load
-		$(Field)_tmp,
-		RangeStart+iterno()-1				as $(Field)
-	Resident ExtractRange1 
-	while RangeStart+iterno()-1 <= RangeEnd and isnum(RangeStart) and isnum(RangeEnd);
-
-	Concatenate(ExtractRange2)
-	Load
-		$(Field)_tmp,
-		RangeStart							as $(Field)
-	Resident ExtractRange1 
-	where not isnum(RangeStart) or not isnum(RangeEnd);
-
-	Drop Table ExtractRange1;
-
-	Join ($(Table)) Load * Resident ExtractRange2;
-	Drop Field $(Field)_tmp;
-	Drop Table ExtractRange2;
-EndSub
-///$tab Report Groups
-ReportGroup_tmp1:
-LOAD
-	RecNo()+1											as ReportGroupExcelRow,
-	"Group Type",
-	$(vAccountGroups),
-	Trim(Subfield(Trim("Konto"),';'))					as Account_tmp
-    
-    //====Extra dimensions, uncomment as many as you are using (rename if needed)====
-    
-// 	Trim(Subfield(Trim([Cost Center]),';'))				as CostCenter_tmp,
-//     trim(SubField(trim(Company),';'))					as Company_tmp,
-//     trim(subfield(trim([Sales Channel]),';'))			as SalesChannel_tmp
-FROM $(vFilePath)
-(ooxml, embedded labels, table is [Account Groups])
-where len("Group Type")>0
-
-;
-
-//Extract AccountRanges
-Call ExtractRange('Account','ReportGroup_tmp1');
-
-//Extract Dimension 1
-// Call ExtractRange('CostCenter','ReportGroup_tmp1');	//Uncomment if you are using extra dimensions
-
-//Extract Dimension 2
-// Call ExtractRange('Company','ReportGroup_tmp1');	//Uncomment if you are using extra dimensions
-
-//Extact Dimension 3
-// Call ExtractRange('SalesChannel', 'ReportGroup_tmp1');	//Uncomment if you are using extra dimensions
-
-
-ReportGroups:
-Load Distinct
-	*,
-	coalesce(Account,'*')	as %Report
-//     Coalesce([Company],'*')&'|'&coalesce(Account,'*')&'|'&coalesce(CostCenter,'*')&'|'&coalesce([SalesChannel],'*')	as %Report	//Use this instead if you are using extra dimensions (configure if needed)
-Resident ReportGroup_tmp1;
-
-
-Drop table ReportGroup_tmp1;
-
-
-STORE ReportGroups INTO '$(vQVD_Storage(DIM_ReportGroups))' (qvd);
-
-
-//Table for mapping %Report to REport Structure
-For n = 1 to $(vNoOfAccountGroups)
-
-	ReportGroupTranslation:
-	Load Distinct
-		%Report,
-		"Group Type"&'|'&'Account Group $(n)'&'|'&"Account Group $(n)"					as %ReportHeader
-
-	Resident ReportGroups where len("Account Group $(n)")>0;
-	
-next
-
-STORE ReportGroupTranslation INTO '$(vQVD_Storage(DIM_ReportGroupTranslation))' (qvd);
-
-
-
-
-
-
-
-
-///$tab Reports
-Set vConcatenate = ;
-
-IncomeStatement_tmp:
-Load * INLINE [Report Name];
-
-For Each vReport in 'Resultaträkning', 'Balansräkning'	//All reports that you are using
-
-	Concatenate (IncomeStatement_tmp)
-    Load
-    	*,
-        "Report Header"																			as "$(vReport)",
-    	"Report Header Text"																	as "$(vReport) Text"
-        ;
-	LOAD
-        '$(vReport)'																			as "Report Name",
-        Dual(Text(Coalesce("Report Header",'')),num(RecNo()+1))									as "Report Header",
-        Coalesce("Report Header",Repeat(' ',num#(RecNo()+1)))									as "Report Header Text",
-        RecNo()+1																				as ReportHeaderExcelRow,
-        Pick(Match("Calculation type",	'Blank','Sum','SumNoFraction','Division'),
-                                        'Blank','Sum','SumNoFraction','Nominator')				as Expression,
-        If("Calculation type"='Blank',1,0)														as flagBlankRow,
-        "Text color",
-        text("Background color")																as "Background color",
-        Text(Numberformat)																		as Numberformat,
-        "Account Group Type",
-        "Account Group level",
-        "Account Group Name",
-        "Account Group Type"&'|Account Group '&"Account Group level"&'|'&"Account Group Name"	as %ReportHeader,
-        ChgColor
-    FROM $(vFilePath) 
-    (ooxml, embedded labels, table is [$(vReport)])
-    where len("Calculation type")>0;
-    
-    Concatenate (IncomeStatement_tmp)
-	Load
-	    "Report Header"                                                                             as "$(vReport)",
-	    "Report Header Text"                                                                        as "$(vReport) Text",
-	    *,
-	    "Account Group Type"&'|Account Group '&"Account Group level"&'|'&"Account Group Name"      as %ReportHeader
-	    ;
-	LOAD
-	    '$(vReport)'                                                                                as "Report Name",
-	    Dual(Text(Coalesce("Report Header",'')),num(RecNo()+1))                                     as "Report Header",
-	    Coalesce("Report Header",Repeat(' ',num#(RecNo()+1)))                                       as "Report Header Text",
-	    RecNo()+1                                                                                   as ReportHeaderExcelRow,
-	    'Denominator'                                                                               as Expression,
-	    0                                                                                           as flagBlankRow,
-	    "Text color",
-	    "Background color",
-	    Text(Numberformat)                                                                          as Numberformat,
-	    "Divide by Account Group Type"                                                              as "Account Group Type",
-	    "Divide By Account Group Level"                                                             as "Account Group level",
-	    "Divide By Account Group Name"                                                              as "Account Group Name",
-	    ChgColor
-	FROM $(vFilePath)
-	(ooxml, embedded labels, table is [$(vReport)])
-	where "Calculation type"='Division';
-
-Next
-
-Left Join (IncomeStatement_tmp)
-Load * Resident ReportGroupTranslation;
-Drop Table ReportGroupTranslation;
-
-
-
-IncomeStatement:
-Noconcatenate Load * Resident IncomeStatement_tmp order by "Report Name", ReportHeaderExcelRow;
-Drop Table IncomeStatement_tmp;
-
-STORE IncomeStatement INTO '$(vQVD_Storage(DIM_IncomeStatement))' (qvd);
+CALL Execute_Sub('Variables')
+CALL Execute_Sub('Load_FX_Daily')
+CALL Execute_Sub('Load_DIM_CostCenter')
+CALL Execute_Sub('Load_DIM_Project')
+CALL Execute_Sub('Load_DIM_Account')
+CALL Execute_Sub('Load_DIM_FinancialYear')
+CALL Execute_Sub('Load_DIM_Articles')
+CALL Execute_Sub('Load_DIM_Customers')
+CALL Execute_Sub('Load_FACT_Invoices')
+CALL Execute_Sub('Load_FACT_Ledger')
